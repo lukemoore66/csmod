@@ -37,7 +37,9 @@ Param (
 	[Parameter(DontShow = $True)] [Switch] $HideProgress,
 	[ValidateRange(0,256)] [Int] $Threads = 0,
 	[ValidateSet('libx264', 'libx265')] [String] $VideoCodec = 'libx265',
-	[ValidatePattern('^(?i)(error|info)$')] [String] $LogLevel = 'error'
+	[ValidatePattern('^(?i)(error|info)$')] [String] $LogLevel = 'error',
+	[ValidateSet('yuv420p', 'yuv420p10le')] [String] $PixelFormat = 'yuv420p10le',
+	[ValidateRange(-1.0, 1000.0)] [Float] $FrameRate = -1.0
 )
 
 #Make We Are Sure Running From Script Directory
@@ -52,8 +54,8 @@ If ((Get-Location).Path -ne $PSScriptRoot) {
 Process-INI $INIPath ((Get-Command -Name $MyInvocation.InvocationName).Parameters).Keys
 
 #Check Parameters
-Set-Variable -Name InputPath -Value ($InputPath.TrimEnd('\'))
-Set-Variable -Name OutputPath -Value ($OutputPath.TrimEnd('\'))
+Set-Variable -Name InputPath -Value ([string](Resolve-Path -LiteralPath $InputPath)).TrimEnd('\')
+Set-Variable -Name OutputPath -Value ([string](Resolve-Path -LiteralPath $OutputPath)).TrimEnd('\')
 Set-Variable -Name Subs -Value (Check-Subs $Subs $SubIndex $SubTitle $SubLang)
 Set-Variable -Name Scrape -Value (Check-Scrape $Scrape $ShowQuery $SeasonQuery $EpisodeQuery $ScrapeLang $SeriesID $EpisodeOffset)
 Set-Variable -Name VideoPreset -Value  (Check-VideoPreset $VideoPreset)
@@ -62,6 +64,7 @@ Set-Variable -Name SubLang -Value (Check-Lang $SubLang)
 Set-Variable -Name ScrapeLang -Value (Check-Lang $ScrapeLang)
 Set-Variable -Name Digits -Value (Check-Digits $Digits)
 Set-Variable -Name Threads -Value (Check-Threads $Threads)
+Set-Variable -Name FrameRate -Value (Check-FrameRate $FrameRate)
 
 #If No CRF Is Set, Automatically Set CRF Value, Depending On Chosen Video Codec
 If ($CRF -eq -1) {
@@ -147,6 +150,11 @@ ForEach ($objFile In $objInputList) {
 		#Set Up Index Selection
 		$objInfo | Add-Member -NotePropertyName 'VideoIndex' -NotePropertyValue (Get-VideoIndex $objInfo $VideoIndex) | Out-Null
 		
+		#Get Framerate From Source Video If It Is Not Defined Yet
+		If ($FrameRate -lt 0.0) {
+			[string]$FrameRate = $objInfo.Streams[$objInfo.VideoIndex].r_frame_rate
+		}
+		
 		#Skip File If No Video Streams Found
 		If ($objInfo.VideoIndex -eq -1) {
 			Write-Warning "No video stream(s) found, skipping."
@@ -187,7 +195,7 @@ ForEach ($objFile In $objInputList) {
 		Write-Host ("`n" + (.\bin\ffmpeg -version | Select-Object -First 1).Trim())
 		
 		Write-Host -ForegroundColor Green "`nEncoding video"
-		.\bin\ffmpeg.exe -y -loglevel $LogLevel -stats -i $objInfo.FullName -threads $Threads -an -sn -c:v $VideoCodec -preset:v $VideoPreset -x265-params log-level=error -pix_fmt yuv420p -crf:v $CRF -map [out] -filter_complex $strVideoFilter -map_metadata -1 -map_chapters -1 $objInfo.RandomBaseNameMP4
+		.\bin\ffmpeg.exe -y -loglevel $LogLevel -stats -i $objInfo.FullName -r $FrameRate -threads $Threads -an -sn -c:v $VideoCodec -preset:v $VideoPreset -x265-params log-level=error -pix_fmt $PixelFormat -crf:v $CRF -map [out] -filter_complex $strVideoFilter -map_metadata -1 -map_chapters -1 $objInfo.RandomBaseNameMP4
 		
 		#Move The Video File To The Output File And Continue If There Is No Audio
 		If ($objInfo.AudioIndex -eq -1) {
@@ -208,7 +216,7 @@ ForEach ($objFile In $objInputList) {
 		$strEncDuration = .\bin\ffprobe.exe -v quiet -print_format default=noprint_wrappers=1:nokey=1 -show_entries format=duration $objInfo.RandomBaseNameMP4
 		
 		#Run FFmpeg (Decode Audio / Gather loudness info)
-		$objLoudInfo = .\bin\ffmpeg.exe -y -hide_banner -nostats -i $objInfo.FullName -map 0:$($objInfo.AudioIndex) -t $strEncDuration -vn -sn -map_metadata -1 -map_chapters -1 -c:a flac -compression_level 0 -af aformat=sample_fmts=s16:channel_layouts=stereo,loudnorm=i=-18.0:linear=true:print_format=json,aresample=48000 $objInfo.RandomBaseNameFLAC 2>&1 | Select-Object -Last 12 | ConvertFrom-Json
+		$objLoudInfo = .\bin\ffmpeg.exe -y -hide_banner -nostats -i $objInfo.FullName -map 0:$($objInfo.AudioIndex) -t $strEncDuration -vn -sn -map_metadata -1 -map_chapters -1 -c:a flac -compression_level 0 -af aformat=sample_fmts=s16:channel_layouts=stereo:sample_rates=48000,loudnorm=i=-18.0:linear=true:print_format=json $objInfo.RandomBaseNameFLAC 2>&1 | Select-Object -Last 12 | ConvertFrom-Json
 		
 		$strThresholdDelta = Format-ThresholdDelta ([decimal]$objLoudInfo.output_thresh - [decimal]$objLoudInfo.input_thresh)
 		Write-Host ('Input / Output threshold delta: ' + $strThresholdDelta + 'dB')
