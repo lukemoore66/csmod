@@ -23,9 +23,10 @@ For a full list of parameters, input the following into a PowerShell Prompt:
 Followed by CTRL + Space
 
 If you want to use this script with qBittorrent, cut and paste the following into the 'Run external program upon torrent completion.' field within the Options -> Downloads menu:
-...
+```
 WScript.exe "C:\Path\to\csmod\tcsi.vbs" "%F" "%L"
-...
+```
+
 Replacing the script path with your own.
 
 Then, use the RSS Downloader function to assign categories that correspond with base name of the corresponding configuration file in the 'ini' folder. For example, setting the category to 'rss-anime', will cause csmod to use the rss-anime.ini configuration.
