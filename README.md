@@ -1,4 +1,4 @@
-# roc - Remux Ordered Chapters From Matroska Files
+# csmod
 
 A PowerShell script that transcodes / renames video files into a highly compatible format. It can be used standalone, or in conjunction with qBittorrent.
 
