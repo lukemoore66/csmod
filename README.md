@@ -1,6 +1,12 @@
 # roc - Remux Ordered Chapters From Matroska Files
 
-A PowerShell script that transcodes / renames video files. It can be used standalone, or in conjunction with qBittorrent.
+A PowerShell script that transcodes / renames video files into a highly compatible format. It can be used standalone, or in conjunction with qBittorrent.
+
+It features:
+* Automatic audio / subtitle stream selection based on language preferences.
+* Automatic renaming of output files using information scraped from TheTVDB.
+* Automatic audio normalization.
+* High quality AAC audio encoding using qaac (Apple's CoreAudio AAC encoder).
 
 ## Getting Started
 
@@ -12,7 +18,7 @@ Typical usage looks like this:
 .\cs.ps1 -InputPath 'C:\Path\To\Input\Files' -Subs -Rename -Scrape 'C:\Path\To\Output\Files'
 ```
 
-The above command will transcode all video files in the InputPath, burn in subtitles, and rename them by scraping relevant information from The TVDB. 
+The above command will transcode all video files in the InputPath, burn in subtitles, and rename them by scraping relevant information from TheTVDB. 
 
 Don't forget the quotation marks around file and folder paths, they are needed for PowerShell to take things literally. Files and folders can also be dragged and dropped into the PowerShell window to fill in the file paths.
 
