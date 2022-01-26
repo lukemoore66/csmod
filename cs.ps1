@@ -18,7 +18,7 @@ Param (
 	[Switch] $NoEncode,
 	[Switch] $NoAudio,
 	[Switch] $NoOverwrite,
-	[ValidateRange(64, 512)] [Int] $AudioBitrate = 160,
+	[ValidateRange(0, 127)] [Int] $AudioQuality = 90,
 	[String] $VideoPreset = 'medium',
 	[ValidatePattern('(^\d{1,4}:\d{1,4}:\d{1,4}:\d{1,4}$)|(^$)')] [String] $ForceCrop,
 	[ValidatePattern('(^\d{1,4}x\d{1,4}$)|(^$)')] [String] $ForceRes,
@@ -54,8 +54,8 @@ If ((Get-Location).Path -ne $PSScriptRoot) {
 Process-INI $INIPath ((Get-Command -Name $MyInvocation.InvocationName).Parameters).Keys
 
 #Check Parameters
-Set-Variable -Name InputPath -Value ([string](Resolve-Path -LiteralPath $InputPath)).TrimEnd('\')
-Set-Variable -Name OutputPath -Value ([string](Resolve-Path -LiteralPath $OutputPath)).TrimEnd('\')
+Set-Variable -Name InputPath -Value (Check-Path $InputPath)
+Set-Variable -Name OutputPath -Value (Check-Path $OutputPath)
 Set-Variable -Name Subs -Value (Check-Subs $Subs $SubIndex $SubTitle $SubLang)
 Set-Variable -Name Scrape -Value (Check-Scrape $Scrape $ShowQuery $SeasonQuery $EpisodeQuery $ScrapeLang $SeriesID $EpisodeOffset)
 Set-Variable -Name VideoPreset -Value  (Check-VideoPreset $VideoPreset)
@@ -150,9 +150,9 @@ ForEach ($objFile In $objInputList) {
 		#Set Up Index Selection
 		$objInfo | Add-Member -NotePropertyName 'VideoIndex' -NotePropertyValue (Get-VideoIndex $objInfo $VideoIndex) | Out-Null
 		
-		#Get Framerate From Source Video If It Is Not Defined Yet
-		If ($FrameRate -lt 0.0) {
-			[string]$FrameRate = $objInfo.Streams[$objInfo.VideoIndex].r_frame_rate
+		#Get Framerate From Source Video If Needed
+		If ($FrameRate -eq -1.0) {
+			[string]$FrameRate = Get-FrameRate $objInfo $FrameRate
 		}
 		
 		#Skip File If No Video Streams Found
@@ -207,31 +207,26 @@ ForEach ($objFile In $objInputList) {
 		}
 		
 		#Demux Audio
-		Write-Host -ForegroundColor Green "`nDecoding audio / Gathering loudness info"
-		
-		#Get Audio Index (PowerShell / FFmpeg Have Trouble Interpreting Object Property References)
-		$strAudioIndex = $objInfo.AudioIndex
-		
+		Write-Host -ForegroundColor Green "`nDecoding audio"
+
 		#Get Duration Of Temporary Video File
 		$strEncDuration = .\bin\ffprobe.exe -v quiet -print_format default=noprint_wrappers=1:nokey=1 -show_entries format=duration $objInfo.RandomBaseNameMP4
 		
-		#Run FFmpeg (Decode Audio / Gather loudness info)
-		$objLoudInfo = .\bin\ffmpeg.exe -y -hide_banner -nostats -i $objInfo.FullName -map 0:$($objInfo.AudioIndex) -t $strEncDuration -vn -sn -map_metadata -1 -map_chapters -1 -c:a flac -compression_level 0 -af aformat=sample_fmts=s16:channel_layouts=stereo:sample_rates=48000,loudnorm=i=-18.0:linear=true:print_format=json $objInfo.RandomBaseNameFLAC 2>&1 | Select-Object -Last 12 | ConvertFrom-Json
+		#Decode Audio
+		.\bin\ffmpeg.exe -y -loglevel $LogLevel -stats -i $objInfo.FullName -map 0:$($objInfo.AudioIndex) -t $strEncDuration -vn -sn -map_metadata -1 -map_chapters -1 -c:a flac -compression_level 0 -af aformat=sample_fmts=s16:channel_layouts=stereo:sample_rates=48000 $objInfo.RandomBaseNameFLAC
 		
-		$strThresholdDelta = Format-ThresholdDelta ([decimal]$objLoudInfo.output_thresh - [decimal]$objLoudInfo.input_thresh)
-		Write-Host ('Input / Output threshold delta: ' + $strThresholdDelta + 'dB')
+		#Encode Audio
+		Write-Host -ForegroundColor Green "`nEncoding audio"
+		.\bin\qaac64.exe $objInfo.RandomBaseNameFLAC -V($AudioQuality) -q 2 -o $objInfo.RandomBaseNameM4A
 		
-		Write-Host -ForegroundColor Green "`nEncoding audio / Applying loudness"
-		#Encode Audio / Apply Loudness
-		.\bin\ffmpeg.exe -y -loglevel error -stats -i $objInfo.RandomBaseNameFLAC -af loudnorm=i=-18.0:linear=true:measured_i="$($objLoudInfo.input_i)":measured_lra="$($objLoudInfo.input_lra)":measured_tp="$($objLoudInfo.input_tp)":measured_thresh="$($objLoudInfo.input_thresh)":offset="$($objLoudInfo.target_offset)",aformat=channel_layouts=stereo:sample_rates=48000 -c:a aac -b:a $AudioBitrate*1000 $objInfo.RandomBaseNameM4A
-		
-		#Delete Temporary Audio File
-		Remove-Item $objInfo.RandomBaseNameFLAC -ErrorAction SilentlyContinue
+		#Apply Gain
+		Write-Host -ForegroundColor Green "`nApplying ReplayGain"
+		.\bin\aacgain.exe /r /k $objInfo.RandomBaseNameM4A
 		
 		# Mux Video / Audio
 		Write-Host -ForegroundColor Green "`nMuxing"
 		New-Item -Path (Split-Path $objInfo.FullNameOutput) -Type Directory -ErrorAction SilentlyContinue | Out-Null
-		.\bin\ffmpeg.exe -y -loglevel error -stats -i $objInfo.RandomBaseNameMP4 -i $objInfo.RandomBaseNameM4A -codec copy -sn -map_metadata -1 -map_chapters -1 $objInfo.FullNameOutput
+		.\bin\mp4box.exe -add $objInfo.RandomBaseNameMP4 -add $objInfo.RandomBaseNameM4A -new $objInfo.FullNameOutput
 	}
 	#Always Remove Temporary Files Before Finishing
 	Finally {
