@@ -35,9 +35,11 @@ WScript.exe "C:\Path\to\csmod\tcsi.vbs" "%F" "%L"
 
 Replacing the script path with your own.
 
-Then, use the RSS Downloader function to assign categories that correspond with base name of the corresponding configuration file in the 'ini' folder. For example, setting the category to 'rss-anime', will cause csmod to use the rss-anime.ini configuration.
+Then, use the RSS Downloader function to assign categories that correspond with base name of the corresponding configuration file in the 'ini' folder.
 
-When creating new ini files, always use rss-default.ini as a template.
+For example, setting the category to [rss-anime], will cause csmod to use the 'rss-anime.ini' configuration file.
+
+When creating new ini files, always use the 'rss-default.ini' file as a template.
 
 All ini files must follow the 'rss-nameofini.ini' naming format.
 
