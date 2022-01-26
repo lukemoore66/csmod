@@ -26,7 +26,7 @@ For a full list of parameters, input the following into a PowerShell Prompt:
 ```
 .\cs.ps1 -
 ```
-Followed by CTRL + Space
+Followed by <kbd>Ctrl</kbd> + <kbd>Space</kbd>
 
 If you want to use this script with qBittorrent, cut and paste the following into the 'Run external program upon torrent completion.' field within the Options -> Downloads menu:
 ```
