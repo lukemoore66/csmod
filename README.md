@@ -37,7 +37,10 @@ All ini files must follow the 'rss-nameofini.ini' naming format.
 
 Whenever a torrent has finished downloading, the torrent is queued in tsci.txt
 
-When you want to process all torrents contained in tcsi.txt, open a PowerShell window and run tcs.ps1.
+When you want to process all torrents contained in tcsi.txt, open a PowerShell prompt and run:
+```
+.\tcs.ps1
+```
 
 ### Prerequisites
 
