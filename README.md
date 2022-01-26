@@ -4,7 +4,7 @@ A PowerShell script that transcodes / renames video files. It can be used standa
 
 ## Getting Started
 
-Click the 'Releases' button above, download the latest version, then unzip everything to a folder of your choice and run cs.ps1 in a PowerShell window. You may require [7-zip](https://www.7-zip.org/)
+Click the 'Releases' button, download the latest version, then unzip everything to a folder of your choice and run cs.ps1 in a PowerShell prompt. You may require [7-zip](https://www.7-zip.org/)
 
 
 Typical usage looks like this:
