@@ -75,4 +75,4 @@ This project is licensed under the MIT License - see the [LICENSE.md](/res/LICEN
 ## Acknowledgments
 
 * Hat tip to ffmpeg / qaac / xiph.org / aacgain / GPAC devs
-* Inspiration: HandBrake, but with better quality audio, better track selection, and a scraper for show names.
+* Inspiration: HandBrake, but with a better quality audio encoder, automated stream selection based on language preferences, and a scraper for automatic renaming of output files.
