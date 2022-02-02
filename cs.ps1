@@ -35,7 +35,6 @@ Param (
 	[String] $Digits = '2',
 	[Switch] $CleanName,
 	[Parameter(DontShow = $True)] [Switch] $HideProgress,
-	[ValidateRange(0,256)] [Int] $Threads = 0,
 	[ValidateSet('libx264', 'libx265')] [String] $VideoCodec = 'libx265',
 	[ValidatePattern('^(?i)(error|info)$')] [String] $LogLevel = 'error',
 	[ValidateSet('yuv420p', 'yuv420p10le')] [String] $PixelFormat = 'yuv420p10le',
@@ -139,7 +138,7 @@ ForEach ($objFile In $objInputList) {
 		}
 		
 		#Show Duration
-		Write-Host ("`nDuration: " + $objInfo.DurationSexagesimal + "`n")
+		Write-Host ("`nEstimated Duration: " + $objInfo.DurationSexagesimal + "`n")
 		
 		#Set Up A Random Name For Temporary Files
 		$objInfo | Add-Member -NotePropertyName 'RandomBaseName' -NotePropertyValue (-join ((0x30..0x39) + ( 0x41..0x5A) + ( 0x61..0x7A) | Get-Random -Count 16 | % {[char]$_})) | Out-Null
@@ -195,8 +194,8 @@ ForEach ($objFile In $objInputList) {
 		Write-Host ("`n" + (.\bin\ffmpeg -version | Select-Object -First 1).Trim())
 		
 		Write-Host -ForegroundColor Green "`nEncoding video"
-		.\bin\ffmpeg.exe -y -loglevel $LogLevel -stats -i $objInfo.FullName -r $FrameRate -threads $Threads -an -sn -c:v $VideoCodec -preset:v $VideoPreset -x265-params log-level=error -pix_fmt $PixelFormat -crf:v $CRF -map [out] -filter_complex $strVideoFilter -map_metadata -1 -map_chapters -1 $objInfo.RandomBaseNameMP4
-		
+		.\bin\ffmpeg.exe -y -loglevel $LogLevel -stats -i $objInfo.FullName -r $FrameRate -an -sn -c:v $VideoCodec -preset:v $VideoPreset -x265-params log-level=error -pix_fmt $PixelFormat -crf:v $CRF -map [out] -filter_complex $strVideoFilter -map_metadata -1 -map_chapters -1 $objInfo.RandomBaseNameMP4
+
 		#Move The Video File To The Output File And Continue If There Is No Audio
 		If ($objInfo.AudioIndex -eq -1) {
 			New-Item -Path (Split-Path $objInfo.FullNameOutput) -Type Directory -ErrorAction SilentlyContinue | Out-Null
