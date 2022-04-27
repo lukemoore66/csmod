@@ -58,6 +58,7 @@ Set-Variable -Name OutputPath -Value (Check-Path $OutputPath)
 Set-Variable -Name Subs -Value (Check-Subs $Subs $SubIndex $SubTitle $SubLang)
 Set-Variable -Name Scrape -Value (Check-Scrape $Scrape $ShowQuery $SeasonQuery $EpisodeQuery $ScrapeLang $SeriesID $EpisodeOffset)
 Set-Variable -Name VideoPreset -Value  (Check-VideoPreset $VideoPreset)
+Set-Variable -Name Replace -Value (Check-Replace $Replace)
 Set-Variable -Name AudioLang -Value (Check-Lang $AudioLang)
 Set-Variable -Name SubLang -Value (Check-Lang $SubLang)
 Set-Variable -Name ScrapeLang -Value (Check-Lang $ScrapeLang)
@@ -121,7 +122,7 @@ ForEach ($objFile In $objInputList) {
 		Write-Host ("Output path: " + $objInfo.FullNameOutput)
 		
 		#Skip If We Cannot Overwrite
-		If (Test-Path -LiteralPath $objInfo.FullNameOutput) {
+		If (($NoOverwrite) -and (Test-Path -LiteralPath $objInfo.FullNameOutput)) {
 			Write-Host "Output file exists. Skipping..."
 			
 			$intFileCount++
@@ -193,27 +194,23 @@ ForEach ($objFile In $objInputList) {
 		#Show FFmpeg Version
 		Write-Host ("`n" + (.\bin\ffmpeg -version | Select-Object -First 1).Trim())
 		
+		#Encode Video
 		Write-Host -ForegroundColor Green "`nEncoding video"
-		.\bin\ffmpeg.exe -y -loglevel $LogLevel -stats -i $objInfo.FullName -r $FrameRate -an -sn -c:v $VideoCodec -preset:v $VideoPreset -x265-params log-level=error -pix_fmt $PixelFormat -crf:v $CRF -map [out] -filter_complex $strVideoFilter -map_metadata -1 -map_chapters -1 $objInfo.RandomBaseNameMP4
-
-		#Move The Video File To The Output File And Continue If There Is No Audio
-		If ($objInfo.AudioIndex -eq -1) {
+		
+		#If We Have A Valid Audio Index, Encode Audio And Video
+		If ($objInfo.AudioIndex -ne -1) {
+			.\bin\ffmpeg.exe -y -loglevel $LogLevel -stats -i $objInfo.FullName -r $FrameRate -an -sn -c:v $VideoCodec -preset:v $VideoPreset -x265-params log-level=error -pix_fmt $PixelFormat -crf:v $CRF -map [out] -filter_complex $strVideoFilter -map_metadata -1 -map_chapters -1 $objInfo.RandomBaseNameMP4 `
+			-map 0:$($objInfo.AudioIndex) -vn -sn -c:a flac -map_metadata -1 -map_chapters -1 -compression_level 0 -af aformat=sample_fmts=s16:channel_layouts=stereo:sample_rates=48000 $objInfo.RandomBaseNameFLAC
+		}
+		#Else Move The Video File To The Output File And Continue As There Is No Audio
+		Else {
 			New-Item -Path (Split-Path $objInfo.FullNameOutput) -Type Directory -ErrorAction SilentlyContinue | Out-Null
 			Move-Item -Force -LiteralPath $objInfo.RandomBaseNameMP4 -Destination $objInfo.FullNameOutput -ErrorAction SilentlyContinue
 			
 			$intFileCount++
 			Continue
 		}
-		
-		#Demux Audio
-		Write-Host -ForegroundColor Green "`nDecoding audio"
 
-		#Get Duration Of Temporary Video File
-		$strEncDuration = .\bin\ffprobe.exe -v quiet -print_format default=noprint_wrappers=1:nokey=1 -show_entries format=duration $objInfo.RandomBaseNameMP4
-		
-		#Decode Audio
-		.\bin\ffmpeg.exe -y -loglevel $LogLevel -stats -i $objInfo.FullName -map 0:$($objInfo.AudioIndex) -t $strEncDuration -vn -sn -map_metadata -1 -map_chapters -1 -c:a flac -compression_level 0 -af aformat=sample_fmts=s16:channel_layouts=stereo:sample_rates=48000 $objInfo.RandomBaseNameFLAC
-		
 		#Encode Audio
 		Write-Host -ForegroundColor Green "`nEncoding audio"
 		.\bin\qaac64.exe $objInfo.RandomBaseNameFLAC -V($AudioQuality) -q 2 -o $objInfo.RandomBaseNameM4A
