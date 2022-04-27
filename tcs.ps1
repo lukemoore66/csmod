@@ -52,7 +52,7 @@ $objInputList.GetEnumerator() | % {
 	Write-Host -ForegroundColor Cyan ($strLines + $strProgress + $strLines + "`n")
 	
 	#Run csmod
-	.\cs.ps1 -InputPath $_.Key -INIPath $_.Value -HideProgress:$True
+	.\cs.ps1 -InputPath $_.Key -INIPath $_.Value
 	
 	#Assign Current Input List Line
 	$strInputListLine = $_.Key + '|' + (Get-Item -LiteralPath $_.Value).BaseName
@@ -66,4 +66,4 @@ $objInputList.GetEnumerator() | % {
 	$intFileCount++
 }
 
-Write-Host "`nComplete."
+Write-Host "`nAll Torrents Processed."
