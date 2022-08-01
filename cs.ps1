@@ -1,4 +1,4 @@
-Param (
+  Param (
 	[Parameter(Mandatory = $True)] [ValidateScript({Test-Path -LiteralPath $_})] [String] $InputPath,
 	[ValidateScript({Test-Path -LiteralPath $_ -PathType Container})] [String] $OutputPath = $PSScriptRoot,
 	[ValidateScript({Test-Path -LiteralPath $_})] [String] $INIPath,
@@ -34,11 +34,13 @@ Param (
 	[ValidateRange(0, 99999999)] [Int] $SeriesID = -1,
 	[String] $Digits = '2',
 	[Switch] $CleanName,
-	[Parameter(DontShow = $True)] [Switch] $HideProgress,
+	[Switch] $HideProgress,
 	[ValidateSet('libx264', 'libx265')] [String] $VideoCodec = 'libx265',
 	[ValidatePattern('^(?i)(error|info)$')] [String] $LogLevel = 'error',
 	[ValidateSet('yuv420p', 'yuv420p10le')] [String] $PixelFormat = 'yuv420p10le',
-	[ValidateRange(-1.0, 1000.0)] [Float] $FrameRate = -1.0
+	[ValidateRange(-1.0, 1000.0)] [Float] $FrameRate = -1.0,
+	[Switch] $ForcedSubsOnly,
+	[Switch] $NoNormalize
 )
 
 #Make We Are Sure Running From Script Directory
@@ -65,6 +67,7 @@ Set-Variable -Name ScrapeLang -Value (Check-Lang $ScrapeLang)
 Set-Variable -Name Digits -Value (Check-Digits $Digits)
 Set-Variable -Name Threads -Value (Check-Threads $Threads)
 Set-Variable -Name FrameRate -Value (Check-FrameRate $FrameRate)
+Set-Variable -Name PixelFormat -Value (Check-PixelFormat $PixelFormat $VideoCodec)
 
 #If No CRF Is Set, Automatically Set CRF Value, Depending On Chosen Video Codec
 If ($CRF -eq -1) {
@@ -78,7 +81,7 @@ If (!$objInputList) {
 	Throw "No valid input files found."
 }
 
-Write-Host "Input File(s):"
+Write-Host "`nInput File(s):"
 ($objInputList).Name
 
 #Process Each File
@@ -87,7 +90,7 @@ $intTotalFileCount = $objInputList.Count
 ForEach ($objFile In $objInputList) {
 	Try {
 		#Show Progress
-		If (!$HideProgress) {
+		If (!$HideProgress -and !$ShowInfo) {
 			$strProgress = "`nProcessing file $intFileCount of " + $intTotalFileCount
 			$strLines = "`n" + ("=" * $strProgress.Length)
 			Write-Host -ForegroundColor Cyan ($strLines + $strProgress + $strLines)
@@ -97,10 +100,10 @@ ForEach ($objFile In $objInputList) {
 		$objInfo = .\bin\ffprobe.exe -v quiet -print_format json -show_entries format=duration,stream=codec_type -show_streams $objFile.FullName | ConvertFrom-Json
 		
 		#Get Additional Info About The Input File
-		$objInfo | Add-Member -NotePropertyName 'DurationSexagesimal' -NotePropertyValue (Get-Sexagesimal $objInfo.format.duration) | Out-Null
 		$objInfo | Add-Member -NotePropertyName 'BaseName' -NotePropertyValue $objFile.BaseName | Out-Null
 		$objInfo | Add-Member -NotePropertyName 'FullName' -NotePropertyValue $objFile.FullName | Out-Null
 		$objInfo | Add-Member -NotePropertyName 'Extension' -NotePropertyValue $objFile.Extension | Out-Null
+		$objInfo | Add-Member -NotePropertyName 'OutputExtension' -NotePropertyValue (Get-OutputExtension $objInfo.Extension $NoEncode) | Out-Null
 		$objInfo | Add-Member -NotePropertyName 'BaseNameCleaned' -NotePropertyValue (Clean-Name $objInfo.BaseName $Replace)
 		$objInfo | Add-Member -NotePropertyName 'ShowTitle' -NotePropertyValue $ShowQuery
 		$objInfo | Add-Member -NotePropertyName 'SeasonNumber' -NotePropertyValue $SeasonQuery
@@ -111,10 +114,10 @@ ForEach ($objFile In $objInputList) {
 		#Show Useful Info
 		Write-Host ("`nInput path: " + $objInfo.FullName)
 		
-		#Show Extra Info And Continue
+		#Show Extra Info And Continue Loop
 		If ($ShowInfo) {
-			$objInfo.streams | Format-Table -AutoSize -Property index, codec_type, codec_name, tags
-			
+			Show-Info $objInfo
+
 			$intFileCount++
 			Continue
 		}
@@ -132,14 +135,11 @@ ForEach ($objFile In $objInputList) {
 		#Only Rename File If Not Encoding
 		If ($NoEncode) {
 			New-Item -Path (Split-Path $objInfo.FullNameOutput) -Type Directory -ErrorAction SilentlyContinue | Out-Null
-			Move-Item -Force -LiteralPath $objInfo.FullName -Destination $objInfo.FullNameOutput #-ErrorAction SilentlyContinue
-			
+			Move-Item -Force -LiteralPath $objInfo.FullName -Destination $objInfo.FullNameOutput
+
 			$intFileCount++
 			Continue
 		}
-		
-		#Show Duration
-		Write-Host ("`nEstimated Duration: " + $objInfo.DurationSexagesimal + "`n")
 		
 		#Set Up A Random Name For Temporary Files
 		$objInfo | Add-Member -NotePropertyName 'RandomBaseName' -NotePropertyValue (-join ((0x30..0x39) + ( 0x41..0x5A) + ( 0x61..0x7A) | Get-Random -Count 16 | % {[char]$_})) | Out-Null
@@ -149,6 +149,12 @@ ForEach ($objFile In $objInputList) {
 		
 		#Set Up Index Selection
 		$objInfo | Add-Member -NotePropertyName 'VideoIndex' -NotePropertyValue (Get-VideoIndex $objInfo $VideoIndex) | Out-Null
+		
+		#Get Duration
+		$objInfo | Add-Member -NotePropertyName 'Duration' -NotePropertyValue (Get-Duration $objInfo $False) | Out-Null
+		
+		#Show Duration
+		Write-Host ("`nVideo Duration: " + (Get-Sexagesimal $objInfo.Duration) + "`n")
 		
 		#Get Framerate From Source Video If Needed
 		If ($FrameRate -eq -1.0) {
@@ -199,7 +205,7 @@ ForEach ($objFile In $objInputList) {
 		
 		#If We Have A Valid Audio Index, Encode Audio And Video
 		If ($objInfo.AudioIndex -ne -1) {
-			.\bin\ffmpeg.exe -y -loglevel $LogLevel -stats -i $objInfo.FullName -r $FrameRate -an -sn -c:v $VideoCodec -preset:v $VideoPreset -x265-params log-level=error -pix_fmt $PixelFormat -crf:v $CRF -map [out] -filter_complex $strVideoFilter -map_metadata -1 -map_chapters -1 $objInfo.RandomBaseNameMP4 `
+			.\bin\ffmpeg.exe -y -loglevel $LogLevel -stats -forced_subs_only ([Int]$ForcedSubsOnly.ToBool()) -i $objInfo.FullName -r $FrameRate -an -sn -c:v $VideoCodec -preset:v $VideoPreset -x265-params log-level=error -pix_fmt $PixelFormat -crf:v $CRF -map [out] -filter_complex $strVideoFilter -map_metadata -1 -map_chapters -1 $objInfo.RandomBaseNameMP4 `
 			-map 0:$($objInfo.AudioIndex) -vn -sn -c:a flac -map_metadata -1 -map_chapters -1 -compression_level 0 -af aformat=sample_fmts=s16:channel_layouts=stereo:sample_rates=48000 $objInfo.RandomBaseNameFLAC
 		}
 		#Else Move The Video File To The Output File And Continue As There Is No Audio
@@ -216,8 +222,10 @@ ForEach ($objFile In $objInputList) {
 		.\bin\qaac64.exe $objInfo.RandomBaseNameFLAC -V($AudioQuality) -q 2 -o $objInfo.RandomBaseNameM4A
 		
 		#Apply Gain
-		Write-Host -ForegroundColor Green "`nApplying ReplayGain"
-		.\bin\aacgain.exe /r /k $objInfo.RandomBaseNameM4A
+		If (!$NoNormalize) {
+			Write-Host -ForegroundColor Green "`nApplying ReplayGain"
+			.\bin\aacgain.exe /r /k $objInfo.RandomBaseNameM4A
+		}
 		
 		# Mux Video / Audio
 		Write-Host -ForegroundColor Green "`nMuxing"
