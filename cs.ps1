@@ -68,15 +68,12 @@ Set-Variable -Name Digits -Value (Check-Digits $Digits)
 Set-Variable -Name Threads -Value (Check-Threads $Threads)
 Set-Variable -Name FrameRate -Value (Check-FrameRate $FrameRate)
 Set-Variable -Name PixelFormat -Value (Check-PixelFormat $PixelFormat $VideoCodec)
-
-#If No CRF Is Set, Automatically Set CRF Value, Depending On Chosen Video Codec
-If ($CRF -eq -1) {
-	Set-Variable -Name CRF -Value (Set-CRF $CRF $VideoCodec)
-}
+Set-Variable -Name CRF -Value (Set-CRF $CRF $VideoCodec)
 
 #Build A List Of Input Files And Display Them
 $InputFormats = @('.m4v', '.vob', '.avi', '.flv', '.wmv', '.ts', '.m2ts', '.avs', '.mov', '.mkv', '.mp4', '.webm', '.ogm', '.mpg', '.mpeg')
 $objInputList = Get-ChildItem -LiteralPath $InputPath -Recurse:(!$NoRecurse) -File | Where-Object {$InputFormats -contains $_.Extension}
+
 If (!$objInputList) {
 	Throw "No valid input files found."
 }
@@ -97,35 +94,50 @@ ForEach ($objFile In $objInputList) {
 		}
 		
 		#Get Info From Input File
-		$objInfo = .\bin\ffprobe.exe -v quiet -print_format json -show_entries format=duration,stream=codec_type -show_streams $objFile.FullName | ConvertFrom-Json
+		$objFFInfo = .\bin\ffprobe.exe -v quiet -print_format json -show_entries format=duration,stream=codec_type -show_streams $objFile.FullName | ConvertFrom-Json
 		
-		#Get Additional Info About The Input File
-		$objInfo | Add-Member -NotePropertyName 'BaseName' -NotePropertyValue $objFile.BaseName | Out-Null
-		$objInfo | Add-Member -NotePropertyName 'FullName' -NotePropertyValue $objFile.FullName | Out-Null
-		$objInfo | Add-Member -NotePropertyName 'Extension' -NotePropertyValue $objFile.Extension | Out-Null
-		$objInfo | Add-Member -NotePropertyName 'OutputExtension' -NotePropertyValue (Get-OutputExtension $objInfo.Extension $NoEncode) | Out-Null
-		$objInfo | Add-Member -NotePropertyName 'BaseNameCleaned' -NotePropertyValue (Clean-Name $objInfo.BaseName $Replace)
-		$objInfo | Add-Member -NotePropertyName 'ShowTitle' -NotePropertyValue $ShowQuery
-		$objInfo | Add-Member -NotePropertyName 'SeasonNumber' -NotePropertyValue $SeasonQuery
-		$objInfo | Add-Member -NotePropertyName 'EpisodeNumber' -NotePropertyValue $EpisodeQuery
-		$objInfo | Add-Member -NotePropertyName 'EpisodeTitle' -NotePropertyValue $null
-		$objInfo | Add-Member -NotePropertyName 'FullNameOutput' -NotePropertyValue (Get-FullNameOutput $objInfo $OutputPath $Scrape $ScrapeLang $CleanName $EpisodeOffset $SeriesID $Digits) | Out-Null
+		#Define Info Object
+		$objInfo = Construct-InfoObject
+		
+		#Define Info Object Values
+		$objInfo.Input.FullName = $objFile.FullName
+		$objInfo.Input.BaseName = $objFile.BaseName
+		$objInfo.Input.Extension = $objFile.Extension
+		$objInfo.Index.Video = Get-VideoIndex $objFFInfo $VideoIndex
+		$objInfo.Index.Audio = Get-AudioIndex $objFFInfo $objInfo $AudioIndex $AudioLang $AudioTitle $NoAudio
+		$objInfo.Index.Sub = Get-SubIndex $objFFInfo $objInfo $SubIndex $SubLang $SubTitle $Subs
+		$objInfo.Input.Duration = Get-Duration $objFFInfo $objInfo
+		$objInfo.Input.FrameCount = Get-FrameCount $objFFInfo $objInfo
+		$objInfo.Input.FrameRate = Get-FrameRate $objFFInfo $objInfo $FrameRate $True
+		$objInfo.Input.Resolution = Get-VideoRes $objFFInfo $objInfo
+		$objInfo.Output.BaseNameClean = (Clean-Name $objInfo.Input.BaseName $Replace)
+		$objInfo.Output.Random.BaseName = -join ((0x30..0x39) + ( 0x41..0x5A) + ( 0x61..0x7A) | Get-Random -Count 16 | % {[char]$_})
+		$objInfo.Output.Extension = Get-OutputExtension $objInfo.Input.Extension $NoEncode
+		$objInfo.Output.Random.FLAC = $objInfo.Output.Random.BaseName + '.flac'
+		$objInfo.Output.Random.MP4 = $objInfo.Output.Random.BaseName + '.mp4'
+		$objInfo.Output.Random.M4A = $objInfo.Output.Random.BaseName + '.m4a'
+		$objInfo.Output.FrameRate = Get-FrameRate $objFFInfo $objInfo $FrameRate $False
+		$objInfo.Scrape.ShowTitle = $ShowQuery
+		$objInfo.Scrape.EpisodeTitle = $Null
+		$objInfo.Scrape.Season = $SeasonQuery
+		$objInfo.Scrape.Episode = $EpisodeQuery
+		$objInfo.Output.FullName = Get-OutputPath $objInfo $OutputPath $Scrape $ScrapeLang $CleanName $EpisodeOffset $SeriesID $Digits
 		
 		#Show Useful Info
-		Write-Host ("`nInput path: " + $objInfo.FullName)
+		Write-Host ("`nInput path: " + $objInfo.Input.FullName)
 		
 		#Show Extra Info And Continue Loop
 		If ($ShowInfo) {
-			Show-Info $objInfo
+			Show-Info $objFFInfo
 
 			$intFileCount++
 			Continue
 		}
 		
-		Write-Host ("Output path: " + $objInfo.FullNameOutput)
+		Write-Host ("Output path: " + $objInfo.Output.FullName)
 		
 		#Skip If We Cannot Overwrite
-		If (($NoOverwrite) -and (Test-Path -LiteralPath $objInfo.FullNameOutput)) {
+		If (($NoOverwrite) -and (Test-Path -LiteralPath $objInfo.Output.FullName)) {
 			Write-Host "Output file exists. Skipping..."
 			
 			$intFileCount++
@@ -134,43 +146,23 @@ ForEach ($objFile In $objInputList) {
 		
 		#Only Rename File If Not Encoding
 		If ($NoEncode) {
-			New-Item -Path (Split-Path $objInfo.FullNameOutput) -Type Directory -ErrorAction SilentlyContinue | Out-Null
-			Move-Item -Force -LiteralPath $objInfo.FullName -Destination $objInfo.FullNameOutput
+			New-Item -Path (Split-Path $objInfo.Output.FullName) -Type Directory -ErrorAction SilentlyContinue | Out-Null
+			Move-Item -Force -LiteralPath $objInfo.Input.FullName -Destination $objInfo.Output.FullName
 
 			$intFileCount++
 			Continue
 		}
 		
-		#Set Up A Random Name For Temporary Files
-		$objInfo | Add-Member -NotePropertyName 'RandomBaseName' -NotePropertyValue (-join ((0x30..0x39) + ( 0x41..0x5A) + ( 0x61..0x7A) | Get-Random -Count 16 | % {[char]$_})) | Out-Null
-		$objInfo | Add-Member -NotePropertyName 'RandomBaseNameFLAC' -NotePropertyValue ($objInfo.RandomBaseName + '.flac') | Out-Null
-		$objInfo | Add-Member -NotePropertyName 'RandomBaseNameMP4' -NotePropertyValue ($objInfo.RandomBaseName + '.mp4') | Out-Null
-		$objInfo | Add-Member -NotePropertyName 'RandomBaseNameM4A' -NotePropertyValue ($objInfo.RandomBaseName + '.m4a') | Out-Null
-		
-		#Set Up Index Selection
-		$objInfo | Add-Member -NotePropertyName 'VideoIndex' -NotePropertyValue (Get-VideoIndex $objInfo $VideoIndex) | Out-Null
-		
-		#Get Duration
-		$objInfo | Add-Member -NotePropertyName 'Duration' -NotePropertyValue (Get-Duration $objInfo $False) | Out-Null
-		
-		#Show Duration
-		Write-Host ("`nVideo Duration: " + (Get-Sexagesimal $objInfo.Duration) + "`n")
-		
-		#Get Framerate From Source Video If Needed
-		If ($FrameRate -eq -1.0) {
-			[string]$FrameRate = Get-FrameRate $objInfo $FrameRate
-		}
-		
 		#Skip File If No Video Streams Found
-		If ($objInfo.VideoIndex -eq -1) {
+		If ($objInfo.Index.Video -eq -1) {
 			Write-Warning "No video stream(s) found, skipping."
 			
 			$intFileCount++
 			Continue
 		}
 		
-		$objInfo | Add-Member -NotePropertyName 'AudioIndex' -NotePropertyValue (Get-AudioIndex $objInfo $AudioIndex $AudioLang $AudioTitle $NoAudio) | Out-Null
-		$objInfo | Add-Member -NotePropertyName 'SubIndex' -NotePropertyValue (Get-SubIndex $objInfo $SubIndex $SubLang $SubTitle $Subs) | Out-Null
+		#Show Duration
+		Write-Host ("`nVideo Duration: " + $objInfo.Input.Duration.AsString + "`n")
 		
 		#Get Fonts If Needed
 		If (($ObjInfo.Extension -eq '.mkv') -and ($ObjInfo.SubIndex -gt -1)) {
@@ -178,24 +170,24 @@ ForEach ($objFile In $objInputList) {
 		}
 
 		#Show Index Selection
-		Write-Host ("Video Index: " + $objInfo.VideoIndex)
+		Write-Host ("Video Index: " + $objInfo.Index.Video)
 		
-		If ([Int]$objInfo.AudioIndex -gt -1) {
-			Write-Host ("Audio Index: " + $objInfo.AudioIndex)
+		If ([Int]$objInfo.Index.Audio -gt -1) {
+			Write-Host ("Audio Index: " + $objInfo.Index.Audio)
 		}
-		If ([Int]$objInfo.SubIndex -gt -1) {
-			Write-Host ("Subtitle Index: " + $objInfo.SubIndex)
+		If ([Int]$objInfo.Index.Sub -gt -1) {
+			Write-Host ("Subtitle Index: " + $objInfo.Index.Sub)
 		}
 		
 		#Get Info For Filter String
-		$objInfo | Add-Member -NotePropertyName 'Crop' -NotePropertyValue (Set-Crop $objInfo $ForceCrop $NoCrop $MinRes) | Out-Null
-		$objInfo | Add-Member -NotePropertyName 'Scale' -NotePropertyValue (Set-Scale $objInfo $Round $ForceRes $MinRes $MaxRes) | Out-Null
-		$objInfo | Add-Member -NotePropertyName 'Subs' -NotePropertyValue (Set-Subs $objInfo $ForceRes $Subs) | Out-Null
+		$objInfo.Filter.Crop = Set-Crop $objInfo $ForceCrop $NoCrop $MinRes
+		$objInfo.Filter.Scale = Set-Scale $objInfo $Round $ForceRes $MinRes $MaxRes
+		$objInfo.Filter.Subs = Set-Subs $objFFInfo $objInfo $ForceRes $Subs
 		
 		#Build Filter String And Show It
-		$strVideoFilter = Build-Filter $objInfo
+		$objInfo.Filter.Chain = Build-Filter $objInfo
 		
-		Write-Host ("`nFilter Chain: " + (Unescape-Filter $strVideoFilter))
+		Write-Host ("`nFilter Chain: " + (Unescape-Filter $objInfo.Filter.Chain))
 		
 		#Show FFmpeg Version
 		Write-Host ("`n" + (.\bin\ffmpeg -version | Select-Object -First 1).Trim())
@@ -205,13 +197,13 @@ ForEach ($objFile In $objInputList) {
 		
 		#If We Have A Valid Audio Index, Encode Audio And Video
 		If ($objInfo.AudioIndex -ne -1) {
-			.\bin\ffmpeg.exe -y -loglevel $LogLevel -stats -forced_subs_only ([Int]$ForcedSubsOnly.ToBool()) -i $objInfo.FullName -r $FrameRate -an -sn -c:v $VideoCodec -preset:v $VideoPreset -x265-params log-level=error -pix_fmt $PixelFormat -crf:v $CRF -map [out] -filter_complex $strVideoFilter -map_metadata -1 -map_chapters -1 $objInfo.RandomBaseNameMP4 `
-			-map 0:$($objInfo.AudioIndex) -vn -sn -c:a flac -map_metadata -1 -map_chapters -1 -compression_level 0 -af aformat=sample_fmts=s16:channel_layouts=stereo:sample_rates=48000 $objInfo.RandomBaseNameFLAC
+			.\bin\ffmpeg.exe -y -loglevel $LogLevel -stats -forced_subs_only ([Int]$ForcedSubsOnly.ToBool()) -i $objInfo.Input.FullName -r $objInfo.Output.FrameRate.AsString -an -sn -c:v $VideoCodec -preset:v $VideoPreset -x265-params log-level=error -pix_fmt $PixelFormat -crf:v $CRF -map [out] -filter_complex $objInfo.Filter.Chain -map_metadata -1 -map_chapters -1 $objInfo.Output.Random.MP4 `
+			-map 0:$($objInfo.Index.Audio) -vn -sn -c:a flac -map_metadata -1 -map_chapters -1 -compression_level 0 -af aformat=sample_fmts=s16:channel_layouts=stereo:sample_rates=48000 $objInfo.Output.Random.FLAC
 		}
 		#Else Move The Video File To The Output File And Continue As There Is No Audio
 		Else {
-			New-Item -Path (Split-Path $objInfo.FullNameOutput) -Type Directory -ErrorAction SilentlyContinue | Out-Null
-			Move-Item -Force -LiteralPath $objInfo.RandomBaseNameMP4 -Destination $objInfo.FullNameOutput -ErrorAction SilentlyContinue
+			New-Item -Path (Split-Path $objInfo.Output.FullName) -Type Directory -ErrorAction SilentlyContinue | Out-Null
+			Move-Item -Force -LiteralPath $objInfo.Output.Random.MP4 -Destination $objInfo.Output.FullName -ErrorAction SilentlyContinue
 			
 			$intFileCount++
 			Continue
@@ -219,28 +211,28 @@ ForEach ($objFile In $objInputList) {
 
 		#Encode Audio
 		Write-Host -ForegroundColor Green "`nEncoding audio"
-		.\bin\qaac64.exe $objInfo.RandomBaseNameFLAC -V($AudioQuality) -q 2 -o $objInfo.RandomBaseNameM4A
+		.\bin\qaac64.exe $objInfo.Output.Random.FLAC -V($AudioQuality) -q 2 -o $objInfo.Output.Random.M4A
 		
 		#Apply Gain
 		If (!$NoNormalize) {
 			Write-Host -ForegroundColor Green "`nApplying ReplayGain"
-			.\bin\aacgain.exe /r /k $objInfo.RandomBaseNameM4A
+			.\bin\aacgain.exe /r /k $objInfo.Output.Random.M4A
 		}
 		
 		# Mux Video / Audio
 		Write-Host -ForegroundColor Green "`nMuxing"
-		New-Item -Path (Split-Path $objInfo.FullNameOutput) -Type Directory -ErrorAction SilentlyContinue | Out-Null
-		.\bin\mp4box.exe -add $objInfo.RandomBaseNameMP4 -add $objInfo.RandomBaseNameM4A -new $objInfo.FullNameOutput
+		New-Item -Path (Split-Path $objInfo.Output.FullName) -Type Directory -ErrorAction SilentlyContinue | Out-Null
+		.\bin\mp4box.exe -add $objInfo.Output.Random.MP4 -add $objInfo.Output.Random.M4A -new $objInfo.Output.FullName
 	}
 	#Always Remove Temporary Files Before Finishing
 	Finally {
 		#Remove Fonts
-		If ($objInfo.RandomBaseName) {
-			Remove-Item $objInfo.RandomBaseName -ErrorAction SilentlyContinue -Force -Recurse
+		If ($objInfo.Output.Random.BaseName) {
+			Remove-Item $objInfo.Output.Random.BaseName -ErrorAction SilentlyContinue -Force -Recurse
 		}
 		
 		#Remove Temporary Files
-		$objInfo.RandomBaseNameMP4, $objInfo.RandomBaseNameM4A, $objInfo.RandomBaseNameFLAC | Remove-Item -ErrorAction SilentlyContinue -Force -Recurse
+		$objInfo.Output.Random.MP4, $objInfo.Output.Random.M4A, $objInfo.Output.Random.FLAC | Remove-Item -ErrorAction SilentlyContinue -Force -Recurse
 	}
 	
 	#Increment Processed File Counter
