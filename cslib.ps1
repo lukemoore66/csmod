@@ -727,17 +727,27 @@ Function Set-Scale ($objFFInfo, $objInputFile, $objPrevFilter, $Round, $ForceRes
 		#get the input file pixel aspect ratio
 		$floatInputFilePAR = $floatInputFileDAR / ($objInputFile.Resolution.Width / $objInputFile.Resolution.Height)
 		
-		#calculate the new display aspect ratio using the input file pixel aspect ratio
+		#calculate the filter's new display aspect ratio using the input file pixel aspect ratio
 		$floatDAR = $floatInputFilePAR * ($intInputWidth / $intInputHeight)
 
+		#force the output to have square pixels
 		#apply the calculated display aspect ratio to the filter's input width and height
-		#this will force the output to use suqare pixels
-		$floatOutputWidth = $intInputHeight * $floatDAR
-		$floatOutputHeight = $intInputHeight
+		#if the filter's input width is greater than or equal to it's height
+		If ($intInputWidth -ge $intInputHeight) {
+			#scale according to the filter's input width (upscale height)
+			$floatOutputWidth = $intInputWidth
+			$floatOutputHeight = $intInputWidth * (1 / $floatDAR)
+		}
+		#otherwise, the filter's input width is less than it's height
+		Else {
+			#scale according to filter's input height (upscale width)
+			$floatOutputWidth = $intInputHeight * $floatDAR
+			$floatOutputHeight = $intInputHeight
+		}
 	}
 	#otherwise we have to assume square pixels, just use the filter's input resolution
 	Else {
-		#when we have square pixels DAR = SAR
+		#when we have square pixels, DAR = SAR = W / H
 		$floatDAR = $intInputWidth / $intInputHeight
 		$floatOutputWidth = $intInputWidth
 		$floatOutputHeight = $intInputHeight
@@ -747,6 +757,7 @@ Function Set-Scale ($objFFInfo, $objInputFile, $objPrevFilter, $Round, $ForceRes
 	#if the output width is greater than or equal to the output height
 	If ($floatOutputWidth -ge $floatOutputHeight) {
 		If ($floatOutputWidth -gt $intMaxWidth) {
+			#downscale according to the max input width
 			$floatOutputWidth = $intMaxWidth
 			$floatOuputHeight = $floatOutputWidth * $floatDAR
 		}
@@ -754,12 +765,13 @@ Function Set-Scale ($objFFInfo, $objInputFile, $objPrevFilter, $Round, $ForceRes
 	#otherwise, the output width is less than the output height
 	Else {
 		If ($floatOutputHeight -gt $intMaxHeight) {
+			#downscale according to the max output height
 			$floatOutputHeight = $intMaxHeight
 			$floatOutputWidth = $floatOutputHeight * $floatDAR
 		}
 	}
 	
-	#quantize the output values to the user defined round parameter
+	#quantize the output values to the user defined 'Round' parameter
 	$intOutputWidth = [int](Round-Value $floatOutputWidth $Round)
 	$intOutputHeight = [int](Round-Value $floatOutputHeight $Round)
 	
