@@ -40,7 +40,8 @@
 	[ValidateRange(-1.0, 1000.0)] [float] $FrameRate = -1.0,
 	[Switch] $ForcedSubsOnly,
 	[Switch] $NoNormalize,
-	[ValidateSet(0, 1, 2)] [int] $Deinterlace = 0
+	[ValidateSet(0, 1, 2)] [int] $Deinterlace = 0,
+	[Switch] $Replicate
 )
 
 #make we are sure running from script directory
@@ -53,6 +54,7 @@ If ((Get-Location).Path -ne $PSScriptRoot) {
 
 #import ini parameters (overwrites command line parameters)
 $objParameters = ((Get-Command -Name $MyInvocation.InvocationName).Parameters).Keys
+
 Process-INI $INIPath $objParameters
 
 #check parameters
@@ -110,6 +112,7 @@ ForEach ($objFile In $objInputList) {
 		$objInputFile.FullName = $objFile.FullName
 		$objInputFile.BaseName = $objFile.BaseName
 		$objInputFile.Extension = $objFile.Extension
+		$objInputFile.Directory = $objFile.Directory.ToString()
 
 		#get video index
 		$objInputFile.Index.Vid = Get-VideoIndex $objFFInfo $VideoIndex
@@ -145,13 +148,16 @@ ForEach ($objFile In $objInputList) {
 		If (-not $objScrape.Success) {
 			#if we elected to clean the basename
 			If ($CleanName) {
-				$objOutputFile.Directory = $OutputPath
 				$objOutputFile.BaseName = $objOutputFile.BaseNameClean
 			}
-			#otherwise we set the output to the default
+			
+			#replicate the input folder structure if needed
+			If (($Replicate) -and ((Get-Item $InputPath) -is [System.IO.DirectoryInfo])) {
+				$objOutputFile.Directory = $objInputFile.Directory.Replace($InputPath, $OutputPath)
+			}
+			#otherwise, just set the output path as normal
 			Else {
 				$objOutputFile.Directory = $OutputPath
-				$objOutputFile.BaseName = $objInputFile.BaseName
 			}
 		}
 
@@ -205,7 +211,7 @@ ForEach ($objFile In $objInputList) {
 		}
 
 		#create temporary file info object, this generate random names
-		$objTempFile = [TempFile]::new()
+		$objTempFile = [TempFile]::new($objInputFile.FullName)
 
 		#make an array to store all filterchains
 		$objFilterChains = @()
@@ -222,7 +228,7 @@ ForEach ($objFile In $objInputList) {
 		$objFilterChain += $objFilterCrop
 
 		#make a scale filter
-		$objFilterScale = Set-Scale $objFilterChain[-1] $Round $ForceRes $NoScale $MinRes $MaxRes
+		$objFilterScale = Set-Scale $objFFInfo $objInputFile $objFilterChain[-1] $Round $ForceRes $NoScale $MinRes $MaxRes
 		$objFilterChain += $objFilterScale
 
 		#make a subtitle filter
@@ -273,8 +279,8 @@ ForEach ($objFile In $objInputList) {
 		Write-Host -NoNewLine "Probing video. Please wait...`r"
 
 		#if we do not have a valid audio index, encode video only and continue
-		If ($objInputFile.AudioIndex -eq -1) {
-			.\bin\ffmpeg.exe -y -loglevel $LogLevel -stats -forced_subs_only ([int]$ForcedSubsOnly.ToBool()) -i $objInputFile.FullName -r $objOutputFile.FrameRate.Fraction -an -sn -c:v $VideoCodec -preset:v $VideoPreset -x265-params log-level=error -pix_fmt $PixelFormat -crf:v $CRF -map [out] -filter_complex $strFilter -map_metadata -1 -map_chapters -1 $objTempFile.MP4
+		If ($objInputFile.Index.Aud -eq -1) {
+			.\bin\ffmpeg.exe -y -loglevel $LogLevel -stats -forced_subs_only ([int]$ForcedSubsOnly.ToBool()) -i $objInputFile.FullName -r $objOutputFile.FrameRate.Fraction -an -sn -c:v $VideoCodec -preset:v $VideoPreset -x265-params log-level=error -pix_fmt $objOutputFile.PixelFormat -crf:v $CRF -map [out] -filter_complex $strFilter -map_metadata -1 -map_chapters -1 $objTempFile.MP4
 
 			# mux video / audio
 			Write-Host -ForegroundColor Green "`nMuxing"

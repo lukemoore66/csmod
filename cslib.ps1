@@ -2,6 +2,7 @@ Class InputFile {
 	[string]$FullName
 	[string]$BaseName
 	[string]$Extension
+	[string]$Directory
 	[Index]$Index = [Index]::new()
 	[Duration]$Duration = [Duration]::new()
 	[FrameCount]$FrameCount = [FrameCount]::new()
@@ -268,16 +269,29 @@ Class Series {
 }
 
 Class TempFile {
+	[string]$InputPath
 	[string]$BaseName
 	[string]$MP4
 	[string]$FLAC
 	[string]$M4A
-
+	[string]$ASS
+	
 	TempFile () {
 		$This.BaseName = -join ((0x30..0x39) + ( 0x41..0x5A) + ( 0x61..0x7A) | Get-Random -Count 16 | ForEach {[char]$_})
 		$This.MP4 = $This.BaseName + '.mp4'
 		$This.FLAC = $This.BaseName + '.flac'
 		$This.M4A = $This.BaseName + '.m4a'
+		$This.ASS = $This.BaseName + '.ass'
+	}
+
+	TempFile (
+		[string]$InputPath
+	) {
+		$This.BaseName = Get-StringHash $InputPath 16
+		$This.MP4 = $This.BaseName + '.mp4'
+		$This.FLAC = $This.BaseName + '.flac'
+		$This.M4A = $This.BaseName + '.m4a'
+		$This.ASS = $This.BaseName + '.ass'
 	}
 }
 
@@ -518,18 +532,18 @@ Function Set-Crop ($objInputFile, $objPrevFilter, $ForceCrop, $NoCrop, $MinRes) 
 	#declare input width and height
 	$intInputWidth = $objFilterCrop.OutputRes.Width
 	$intInputHeight = $objFilterCrop.OutputRes.Height
+	
+	#get minimum resolution values (used in forced crop and auto crop)
+	$arrMinRes = $MinRes.Split('x')
+	$intMinWidth = [int]$arrMinRes[0]
+	$intMinHeight = [int]$arrMinRes[1]
 
 	#check if forced crop is enabled and valid
 	If ($ForceCrop) {
-		#get crop values
-		$arrForceCrop = $ForceCrop.Split(':')
-		$intForceWidth = [int]($arrForceCrop[0] + $arrForceCrop[2])
-		$intForceHeight = [int]($arrForceCrop[1] + $arrForceCrop[3])
-
-		#get minimum resolution values
-		$arrMinRes = $MinRes.Split('x')
-		$intMinWidth = [int]$arrMinRes[0]
-		$intMinHeight = [int]$arrMinRes[1]
+		#get crop values, explictly cast to an array of integers, as split() always returns an array of strings
+		$arrForceCrop = [int[]]($ForceCrop.Split(':'))
+		$intForceWidth = $arrForceCrop[0] + $arrForceCrop[2]
+		$intForceHeight = $arrForceCrop[1] + $arrForceCrop[3]
 
 		#if forced crop is within width / height bounds, use it
 		If (($intForceWidth -le $intInputWidth) -and ($intForceHeight -le $intInputHeight) -and ($intForceWidth -ge $intMinWidth) -and ($intForceHeight -ge $intMinHeight)) {
@@ -548,30 +562,36 @@ Function Set-Crop ($objInputFile, $objPrevFilter, $ForceCrop, $NoCrop, $MinRes) 
 	#start auto cropping
 	$objCropList = New-Object System.Collections.Generic.List[string]
 	$intTotalIterations = 10
-	$intFrameAmt = 30
-	$intCropConfidence = 50
+	$intFrameAmt = [Math]::Round($objInputFile.FrameRate.Decimal, 0)
+	$floatCropConfidenceThreshhold = 66.7
 
 	#ensure video is long enough to perform auto-crop
 	If (($objInputFile.FrameRate.Decimal * $objInputFile.Duration.Seconds) -lt ($intFrameAmt * $intTotalIterations)) {
 		Write-Warning ('Video duration is too short: {0}. Auto-crop filter bypassed.' -f $objInputFile.Duration.Sexagesimal)
+		
+		Return $objFilterCrop
 	}
 
-	$intSeekChunk = [int]($objInputFile.Duration.Seconds / $intTotalIterations)
+	
+	$floatSeekChunk = $objInputFile.Duration.Seconds / $intTotalIterations
 
 	#run auto crop
 	$intCropCounter = 0
 	While ($intCropCounter -lt $intTotalIterations) {
-		$intSeekSeconds =  [int]($intCropCounter * $intSeekChunk)
+		$intSeekSeconds =  $intCropCounter * $floatSeekChunk
 
 		#run ffmpeg
-		$strCropDetect = .\bin\ffmpeg.exe -ss $intSeekSeconds -i $objInputFile.FullName -map ('0:' + $objInputFile.Index.Vid) -frames $intFrameAmt -vf cropdetect=24:4 -f null nul 2>&1
-
+		$strCropDetect = .\bin\ffmpeg.exe -skip_frame noref -vsync 0 -ss $intSeekSeconds -i $objInputFile.FullName -map ('0:' + $objInputFile.Index.Vid) -frames $intFrameAmt -vf cropdetect=limit=24:round=4 -f null nul 2>&1
+		
 		#split ffmpeg output string to get crop parameters
 		$strCrop = [regex]::Split([regex]::Split($strCropDetect, 'crop=')[-1], "`r`n")[0].Trim()
 		$strCrop = $strCrop.Split("frame=")[0].Trim()
-
-		#add current crop value to crop list
-		$objCropList.Add($strCrop)
+		
+		#add to the crop list if there are no errors
+		If ($strCrop -match '^([0-9]+):([0-9]+):([0-9]+):([0-9]+)$') {
+			#add current crop value to crop list
+			$objCropList.Add($strCrop)
+		}
 
 		#calculate / format progress percentage
 		$floatProgress = (([int]$intCropCounter / [int]($intTotalIterations - 1)) * 100).ToString("0.0")
@@ -591,28 +611,49 @@ Function Set-Crop ($objInputFile, $objPrevFilter, $ForceCrop, $NoCrop, $MinRes) 
 	#make sure cropping confidence is greater than 50%
 	#get the most common cropping value
 	$objCrop = $objCropList | Group-Object | Sort-Object Count -Descending | Select-Object -First 1
+	
 	[float]$floatCropConfidence = ($objCrop.Count / $intTotalIterations) * 100
-
-	#bypass crop if not confident
-	If ($floatCropConfidence -lt $intCropConfidence) {
-		Write-Warning ("Auto-crop confidence is below $intCropConfidence% (" + ("{0:n1}" -f $floatCropConfidence) + "%). Auto-crop filter bypassed.")
-
+	
+	#get the most common auto-crop string
+	$strCrop = $objCrop | Select-Object -ExpandProperty Name -First 1
+	
+	#check if our crop is invalid
+	If (-not $strCrop) {
+		Write-Warning ('Auto-crop is invalid. No crop data found. Auto-crop filter bypassed.' -f $strCrop)
 		$objFilterCrop.String = $Null
-
 		Return $objFilterCrop
 	}
 
-	#get the most common auto-crop string
-	$strCrop = $objCrop | Select-Object -ExpandProperty Name -First 1
-
-	#if height / width has not changed, bypass auto-crop
+	#get output height and width
 	$arrCrop = $strCrop.Split(':')
-	$intOutputWidth = $arrCrop[0]
-	$intOutputHeight = $arrCrop[1]
-
+	$intOutputWidth = [int]$arrCrop[0]
+	$intOutputHeight = [int]$arrCrop[1]
+	
+	#first, check if we have enough data points
+	$intMinimumDataPoints = [int]($intTotalIterations * 0.8)
+	If ($objCropList.Count -lt $intMinimumDataPoints) {
+		Write-Warning ('Auto-crop did not collect enough data points: {0} of {1}. Auto-crop filter bypassed.' -f $objCropList.Count, $intMinimumDataPoints)
+		$objFilterCrop.String = $Null
+		Return $objFilterCrop
+	}
+	
+	#next, check if our crop is invalid
+	If (($intOutputWidth -le $intMinWidth) -or ($intOutputHeight -le $intMinHeight)) {
+		Write-Warning ('Auto-crop is invalid: {0}. Auto-crop filter bypassed.' -f $strCrop)
+		$objFilterCrop.String = $Null
+		Return $objFilterCrop
+	}
+	
+	#next, check if nothing changed
 	If (($intInputWidth -eq $intOutputWidth) -and ($intInputHeight -eq $intOutputHeight)) {
 		$objFilterCrop.String = $Null
-
+		Return $objFilterCrop
+	}
+	
+	#next, check if are are confident in our auto crop
+	If (($floatCropConfidence -lt $floatCropConfidenceThreshhold) -and ($intCropBypass -eq 0)) {
+		Write-Warning ("Auto-crop confidence is below $floatCropConfidenceThreshhold% (" + ("{0:n1}" -f $floatCropConfidence) + "%). Auto-crop filter bypassed.")
+		$objFilterCrop.String = $Null
 		Return $objFilterCrop
 	}
 
@@ -625,7 +666,7 @@ Function Set-Crop ($objInputFile, $objPrevFilter, $ForceCrop, $NoCrop, $MinRes) 
 }
 
 #sets scaling for chosen video stream
-Function Set-Scale ($objPrevFilter, $Round, $ForceRes, $NoScale, $MinRes, $MaxRes) {
+Function Set-Scale ($objFFInfo, $objInputFile, $objPrevFilter, $Round, $ForceRes, $NoScale, $MinRes, $MaxRes) {
 	$objScaleFilter = [Filter]::new($objPrevFilter.OutputRes)
 
 	#check if scaling is disabled
@@ -667,46 +708,54 @@ Function Set-Scale ($objPrevFilter, $Round, $ForceRes, $NoScale, $MinRes, $MaxRe
 	$arrMaxRes = $MaxRes.Split('x')
 	$intMaxWidth = [int]$arrMaxRes[0]
 	$intMaxHeight = [int]$arrMaxRes[1]
-
-	#next, get scaled width / height
-	#check if input width is greater than maximum width
-	If ($intInputWidth -gt $intMaxWidth) {
-		#set input width to maximum width
-		$intOutputWidth = $intMaxWidth
-
-		#calculate max height based on maximum width
-		$intOutputHeight = ($intMaxWidth / $intInputWidth) * $intInputHeight
-
-		#if output height is greater than maximum height
-		#scale output width based on maximum height
-		#this way, we are always within the limits of the maximum resolution
-		If ($intOutputHeight -gt $intMaxHeight) {
-			$intOutputWidth = ($intMaxHeight / $intOutputHeight) * $intOutputWidth
-			$intOutputHeight = $intMaxHeight
-		}
+	
+	#get the input display aspect ratio
+	$strDAR = $objFFInfo.streams[$objInputFile.Index.Vid].display_aspect_ratio
+	
+	#use the display aspect ratio if it exists
+	If ($strDAR) {
+		$arrDAR = $objFFInfo.streams[$objInputFile.Index.Vid].display_aspect_ratio.Split(':')
 	}
-	#otherwise, if input height is greater than maximum height
-	#scale output width based on maximum height
-	ElseIf ($intInputHeight -gt $intMaxHeight) {
-		$intOutputHeight = $intMaxHeight
-		$intOutputWidth = ($intMaxHeight / $intInputHeight) * $intInputWidth
-	}
-	#otherwise, we are within max width / height limits
-	#set output width / height as input width / height
+	#otherwise we have to assume square pixels, use the resolution
 	Else {
-		$intOutputWidth = $intInputWidth
-		$intOutputHeight = $intInputHeight
+		$arrDAR = @([string]$intInputWidth, [string]$intInputHeight)
 	}
-
-	#round width / height
-	[int]$intOutputWidth = Round-Value $intOutputWidth $Round
-	[int]$intOutputHeight = Round-Value $intOutputHeight $Round
-
-	#1080p rounding hack
-	If ($Round = 16) {
-		If (($intOutputHeight -le 1088) -and ($intOutputHeight -ge 1072)) {
-			$intOutputHeight = 1080
+	
+	$floatDAR = [float]$arrDAR[0] / [float]$arrDAR[1]
+	
+	#force square pixels
+	$floatOutputWidth = $intInputHeight * $floatDAR
+	$floatOutputHeight = $intInputHeight
+	
+	#if the output width is greater than or equal to the output height
+	If ($floatOutputWidth -ge $floatOutputHeight) {
+		If ($floatOutputWidth -gt $intMaxWidth) {
+			$floatOutputWidth = $intMaxWidth
+			$floatOuputHeight = $floatOutputWidth * $floatDAR
 		}
+	}
+	#otherwise, the output width is less than the output height
+	Else {
+		If ($floatOutputHeight -gt $intMaxHeight) {
+			$floatOutputHeight = $intMaxHeight
+			$floatOutputWidth = $floatOutputHeight * $floatDAR
+		}
+	}
+	
+	#round the output values to the nearest round amount
+	$intOutputWidth = [int](Round-Value $floatOutputWidth $Round)
+	$intOutputHeight = [int](Round-Value $floatOutputHeight $Round)
+	
+	#if the output width is greater than the max width
+	If ($intOutputWidth -gt $intMaxWidth) {
+		#decrement and floor the output width to the round amount
+		$intOutputWidth = [Math]::Floor(($floatOutputWidth - 1) / $Round) * $Round
+	}
+	
+	#if the output height is greater than the max height
+	If ($intOutputHeight -gt $intMaxHeight) {
+		#decrement and floor the output height to the round amount
+		$intOutputHeight = [Math]::Floor(($floatOutputHeight - 1) / $Round) * $Round
 	}
 
 	#do nothing if input width / height is equal to output width / height
@@ -792,18 +841,66 @@ Function Set-Subs ($objFFInfo, $objInputFile, $objPrevFilter, $objTempFile, $For
 	$strFullNameEsc = Escape-Filter $objInputFile.FullName
 	$strFontPathEsc = Escape-Filter ($PSScriptRoot + '\' + $objTempFile.BaseName)
 
-	#if resolution is forced, we have to maintain original aspect ratio
-	If ($ForceRes) {
-		$strSubForceRes = ':original_size={0}x{1}' -f $objInputFile.Resolution.Width,  $objInputFile.Resolution.Height
-	}
+<# 	#maintain original aspect ratio of subtitles if required
+	$objSubRes = Get-PlayRes $objInputFile $strSubCodec $objTempFile
+	If ($objSubRes) {
+		$strSubOrigRes = ':original_size={0}x{1}' -f $objSubRes.Width,  $objSubRes.Height
+	} #>
 
-	$strSubFilter = 'subtitles="{0}":fontsdir="{1}":si={2}{3}' -f $strFullNameEsc, $strFontPathEsc, $intSubFilterIndex, $strSubForceRes
+	$strSubFilter = 'subtitles="{0}":fontsdir="{1}":si={2}{3}' -f $strFullNameEsc, $strFontPathEsc, $intSubFilterIndex, $strSubOrigRes
 
 	#fill in filter string
 	$objSubFilter.String = $strSubFilter
 
 	Return $objSubFilter
 }
+
+<# Function Get-PlayRes ($objInputFile, $strSubCodec, $objTempFile) {
+	#check that the subtitle format is ssa or ass
+	$strSubCodecs = @('ass', 'ssa')
+	If ($strSubCodecs -notcontains $strSubCodec) {
+		Return $Null
+	}
+	
+	#extract subtitle info
+	.\bin\ffmpeg -y -loglevel quiet -i $objInputFile.FullName -t 0 -c copy -map 0:$($objInputFile.Index.Sub) $objTempFile.ASS
+	$objINIContent = Get-Content -LiteralPath $objTempFile.ASS
+	Remove-Item -LiteralPath $objTempFile.ASS -ErrorAction SilentlyContinue
+	
+	$boolFoundScriptInfo = $False
+	ForEach ($strLine in $objINIContent) {
+		#look for script info section as long as we haven't found it yet
+		If (($strLine.Trim() -imatch '^\[Script Info\]') -and (-not $boolFoundScriptInfo)) {
+			$boolFoundScriptInfo = $True
+			Continue
+		}
+		
+		#if we have reached the end of the script info section, stop reading
+		If (($strLine.Trim() -match '^\[(.+)\]') -and ($boolFoundScriptInfo)) {
+			Break
+		}
+		
+		#try to get the playback resolution
+		If ($strLine.Trim() -imatch '^PlayResX:.*$') {
+			$strPlayResX = ($strLine.Split(':')[1]).Trim()
+		}
+		
+		If ($strLine.Trim() -imatch '^PlayResY:.*$') {
+			$strPlayResY = ($strLine.Split(':')[1]).Trim()
+		}
+	}
+	
+	#make sure we have a valid resolution
+	If ((-not $strPlayResX) -or (-not $strPlayResY)) {
+		Return $Null
+	}
+	
+	#make sure the width and height are integers
+	Try{$strPlayResX -as [int]} Catch{Return $Null}
+	Try{$strPlayResY -as [int]} Catch{Return $Null}
+	
+	Return [Resolution]::New([int]$strPlayResX, [int]$strPlayResY)
+} #>
 
 Function Get-ScaleAlgo ($intInWidth, $intInHeight, $intOutWidth, $intOutHeight) {
 	[int]$intInputRes = $intInWidth * $intInHeight
@@ -1263,7 +1360,7 @@ Function Remove-TempFiles ($objTempFile) {
 	$objTempFile.BaseName | Remove-Item -ErrorAction SilentlyContinue -Force -Recurse
 
 	#remove temporary files
-	$objTempFile.MP4, $objTempFile.M4A, $objTempFile.FLAC | Remove-Item -ErrorAction SilentlyContinue -Force
+	$objTempFile.MP4, $objTempFile.M4A, $objTempFile.FLAC, $objTempFile.ASS | Remove-Item -ErrorAction SilentlyContinue -Force
 }
 
 Function Check-Replace ($strReplace) {
@@ -1423,4 +1520,15 @@ Function Check-Lang ($InputLang) {
 
 	#otherwise the input language is invalid, throw an error
 	Throw ('{0} is not valid. Please use ISO 639-2 language codes only:`nhttps://en.wikipedia.org/wiki/List_of_ISO_639-2_codes' -f $InputLang)
+}
+
+Function Get-StringHash ($strInput, $intLength) {
+	$stringAsStream = [System.IO.MemoryStream]::new()
+	$writer = [System.IO.StreamWriter]::new($stringAsStream)
+	$writer.write($strInput)
+	$writer.Flush()
+	$stringAsStream.Position = 0
+	$strOutput = Get-FileHash -InputStream $stringAsStream | Select-Object Hash
+	
+	Return ($strOutput.Hash).SubString(0, $intLength - 1)
 }
