@@ -49,7 +49,7 @@ $objInputList.GetEnumerator() | % {
 	#Show Progress
 	$strProgress = "`nProcessing torrent $intFileCount of " + $intTotalFileCount
 	$strLines = "`n" + ("=" * $strProgress.Length)
-	Write-Host -ForegroundColor Cyan ($strLines + $strProgress + $strLines + "`n")
+	Write-Host -ForegroundColor Cyan ($strLines + $strProgress + $strLines)
 	
 	#Run csmod
 	.\cs.ps1 -InputPath $_.Key -INIPath $_.Value
