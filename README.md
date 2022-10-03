@@ -52,7 +52,7 @@ When you want to process all torrents contained in `tcsi.txt`, open a PowerShell
 
 ### Prerequisites
 
-PowerShell 3.0 or higher is required. Windows 8 and 10 have it installed by default. You may have to download the latest [Windows Management Framework](https://www.microsoft.com/en-us/download/details.aspx?id=54616) (which includes PowerShell) manually if you are running an older version of Windows. This script will only run on Windows.
+PowerShell 7.0 or higher is required. Windows 8 and 10 have it installed by default. You may have to download the latest [Windows Management Framework](https://www.microsoft.com/en-us/download/details.aspx?id=54616) (which includes PowerShell) manually if you are running an older version of Windows. This script will only run on Windows.
 
 Scripts are disabled by default in Windows systems, they need to be enabled for csmod to run. For more information please visit [about_Execution_Policies
 ](https://docs.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies?view=powershell-7.2).
