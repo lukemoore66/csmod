@@ -44,6 +44,12 @@
 	[Switch] $Replicate
 )
 
+#ensure we have the correct powershell version
+$intPSMinimumVersion = 7
+If ($PSVersionTable.PSVersion.Major -lt $intPSMinimumVersion) {
+	Throw ("This script requires PowerShell v$intPSMinimumVersion and up to run.")
+}
+
 #make we are sure running from script directory
 If ((Get-Location).Path -ne $PSScriptRoot) {
 	Throw ("This script can only be run from it's own directory: '" + $PSScriptRoot + "'")
