@@ -731,18 +731,18 @@ Function Set-Scale ($objFFInfo, $objInputFile, $objPrevFilter, $Round, $ForceRes
 		$floatDAR = $floatInputFilePAR * ($intInputWidth / $intInputHeight)
 
 		#force the output to have square pixels
-		#apply the calculated display aspect ratio to the filter's input width and height
-		#if the filter's input width is greater than or equal to it's height
-		If ($intInputWidth -ge $intInputHeight) {
-			#scale according to the filter's input width (upscale height)
-			$floatOutputWidth = $intInputWidth
-			$floatOutputHeight = $intInputWidth * (1 / $floatDAR)
-		}
-		#otherwise, the filter's input width is less than it's height
-		Else {
-			#scale according to filter's input height (upscale width)
-			$floatOutputWidth = $intInputHeight * $floatDAR
+		#if the input pixel aspect ratio is greater than or equal to 1
+		#this means the pixels are wider than they are high, or are already square
+		If ($floatInputFilePAR -ge 1.0) {
+			#upscale the width
+			$floatOutputWidth = $intInputWidth * $floatInputFilePAR
 			$floatOutputHeight = $intInputHeight
+		}
+		#otherwise, the pixels are higher than they are wide
+		Else {
+			#upscale the height
+			$floatOutputWidth = $intInputWidth
+			$floatOutputHeight = $intInputHeight * $floatInputFilePAR
 		}
 	}
 	#otherwise we have to assume square pixels, just use the filter's input resolution
@@ -775,16 +775,16 @@ Function Set-Scale ($objFFInfo, $objInputFile, $objPrevFilter, $Round, $ForceRes
 	$intOutputWidth = [int](Round-Value $floatOutputWidth $Round)
 	$intOutputHeight = [int](Round-Value $floatOutputHeight $Round)
 	
-	#if the output width is greater than the max width
+	#if the output width is greater than the max width, this is possible due to quantization
 	If ($intOutputWidth -gt $intMaxWidth) {
-		#decrement and floor the output width to the round amount
-		$intOutputWidth = [Math]::Floor(($floatOutputWidth - 1) / $Round) * $Round
+		#decrease the output width by the round amount
+		$intOutputWidth -= $Round
 	}
 	
 	#if the output height is greater than the max height
 	If ($intOutputHeight -gt $intMaxHeight) {
-		#decrement and floor the output height to the round amount
-		$intOutputHeight = [Math]::Floor(($floatOutputHeight - 1) / $Round) * $Round
+		#decrease the output height by the round amount
+		$intOutputHeight -= $Round
 	}
 
 	#do nothing if input width / height is equal to output width / height
@@ -869,67 +869,15 @@ Function Set-Subs ($objFFInfo, $objInputFile, $objPrevFilter, $objTempFile, $For
 
 	$strFullNameEsc = Escape-Filter $objInputFile.FullName
 	$strFontPathEsc = Escape-Filter ($PSScriptRoot + '\' + $objTempFile.BaseName)
+	$strOrigSize = [string]$objInputFile.Resolution.Width + 'x' + [string]$objInputFile.Resolution.Height
 
-<# 	#maintain original aspect ratio of subtitles if required
-	$objSubRes = Get-PlayRes $objInputFile $strSubCodec $objTempFile
-	If ($objSubRes) {
-		$strSubOrigRes = ':original_size={0}x{1}' -f $objSubRes.Width,  $objSubRes.Height
-	} #>
-
-	$strSubFilter = 'subtitles="{0}":fontsdir="{1}":si={2}{3}' -f $strFullNameEsc, $strFontPathEsc, $intSubFilterIndex, $strSubOrigRes
+	$strSubFilter = 'subtitles="{0}":fontsdir="{1}":si={2}:original_size={3}' -f $strFullNameEsc, $strFontPathEsc, $intSubFilterIndex, $strOrigSize
 
 	#fill in filter string
 	$objSubFilter.String = $strSubFilter
 
 	Return $objSubFilter
 }
-
-<# Function Get-PlayRes ($objInputFile, $strSubCodec, $objTempFile) {
-	#check that the subtitle format is ssa or ass
-	$strSubCodecs = @('ass', 'ssa')
-	If ($strSubCodecs -notcontains $strSubCodec) {
-		Return $Null
-	}
-	
-	#extract subtitle info
-	.\bin\ffmpeg -y -loglevel quiet -i $objInputFile.FullName -t 0 -c copy -map 0:$($objInputFile.Index.Sub) $objTempFile.ASS
-	$objINIContent = Get-Content -LiteralPath $objTempFile.ASS
-	Remove-Item -LiteralPath $objTempFile.ASS -ErrorAction SilentlyContinue
-	
-	$boolFoundScriptInfo = $False
-	ForEach ($strLine in $objINIContent) {
-		#look for script info section as long as we haven't found it yet
-		If (($strLine.Trim() -imatch '^\[Script Info\]') -and (-not $boolFoundScriptInfo)) {
-			$boolFoundScriptInfo = $True
-			Continue
-		}
-		
-		#if we have reached the end of the script info section, stop reading
-		If (($strLine.Trim() -match '^\[(.+)\]') -and ($boolFoundScriptInfo)) {
-			Break
-		}
-		
-		#try to get the playback resolution
-		If ($strLine.Trim() -imatch '^PlayResX:.*$') {
-			$strPlayResX = ($strLine.Split(':')[1]).Trim()
-		}
-		
-		If ($strLine.Trim() -imatch '^PlayResY:.*$') {
-			$strPlayResY = ($strLine.Split(':')[1]).Trim()
-		}
-	}
-	
-	#make sure we have a valid resolution
-	If ((-not $strPlayResX) -or (-not $strPlayResY)) {
-		Return $Null
-	}
-	
-	#make sure the width and height are integers
-	Try{$strPlayResX -as [int]} Catch{Return $Null}
-	Try{$strPlayResY -as [int]} Catch{Return $Null}
-	
-	Return [Resolution]::New([int]$strPlayResX, [int]$strPlayResY)
-} #>
 
 Function Get-ScaleAlgo ($intInWidth, $intInHeight, $intOutWidth, $intOutHeight) {
 	[int]$intInputRes = $intInWidth * $intInHeight
