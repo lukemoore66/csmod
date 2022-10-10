@@ -819,7 +819,7 @@ Function Set-Scale ($objFFInfo, $objInputFile, $objPrevFilter, $Round, $ForceRes
 		Else {
 			#upscale the height
 			$floatOutputWidth = $intInputWidth
-			$floatOutputHeight = $intInputHeight * $floatInputFilePAR
+			$floatOutputHeight = $intInputHeight / $floatInputFilePAR
 		}
 	}
 	#otherwise we have to assume square pixels, just use the filter's input resolution
@@ -836,7 +836,7 @@ Function Set-Scale ($objFFInfo, $objInputFile, $objPrevFilter, $Round, $ForceRes
 		If ($floatOutputWidth -gt $intMaxWidth) {
 			#downscale according to the max input width
 			$floatOutputWidth = $intMaxWidth
-			$floatOutputHeight = $floatOutputWidth * (1 / $floatDAR)
+			$floatOutputHeight = $floatOutputWidth / $floatDAR
 		}
 	}
 	#otherwise, the output width is less than the output height
