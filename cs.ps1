@@ -24,7 +24,7 @@
 	[ValidatePattern('(^\d{1,4}x\d{1,4}$)|(^$)')] [string] $ForceRes,
 	[ValidatePattern('^\d{1,4}x\d{1,4}$')] [string] $MinRes = '64x64',
 	[ValidatePattern('^\d{1,4}x\d{1,4}$')] [string] $MaxRes = '1920x1080',
-	[String[]] $Replace,
+	[string[]] $Replace,
 	[ValidateRange(0, 128)] [int] $Round = 8,
 	[Switch] $NoCrop,
 	[Switch] $NoScale,
@@ -37,7 +37,7 @@
 	[ValidateSet('libx264', 'libx265')] [string] $VideoCodec = 'libx265',
 	[ValidatePattern('^(?i)(error|info|debug)$')] [string] $LogLevel = 'error',
 	[ValidateSet('auto', 'yuv420p', 'yuv420p10le')] [string] $PixelFormat = 'auto',
-	[ValidateRange(-1.0, 1000.0)] [float] $FrameRate = -1.0,
+	[string] $FrameRate = 'auto',
 	[Switch] $ForcedSubsOnly,
 	[Switch] $NoNormalize,
 	[ValidateSet(0, 1, 2)] [int] $Deinterlace = 0,
@@ -122,6 +122,8 @@ ForEach ($objFile In $objInputList) {
 
 		#get video index
 		$objInputFile.Index.Vid = Get-VideoIndex $objFFInfo $VideoIndex
+		#create temporary file info object, this generate random names
+		$objTempFile = [TempFile]::new($objInputFile.FullName)
 
 		#skip file if no video streams found
 		If ($objInputFile.Index.Vid -eq -1) {
@@ -156,7 +158,7 @@ ForEach ($objFile In $objInputList) {
 			If ($CleanName) {
 				$objOutputFile.BaseName = $objOutputFile.BaseNameClean
 			}
-			
+
 			#replicate the input folder structure if needed
 			If (($Replicate) -and ((Get-Item $InputPath) -is [System.IO.DirectoryInfo])) {
 				$objOutputFile.Directory = $objInputFile.Directory.Replace($InputPath, $OutputPath)
@@ -199,7 +201,7 @@ ForEach ($objFile In $objInputList) {
 		$objInputFile.Index.Aud = Get-AudioIndex $objFFInfo $AudioIndex $AudioLang $AudioTitle $NoAudio
 		$objInputFile.Index.Sub = Get-SubIndex $objFFInfo $SubIndex $SubLang $SubTitle $Subs
 
-		#fil output properties
+		#fill output properties
 		$objOutputFile.FrameRate = Set-OutputFrameRate $objInputFile $FrameRate $Deinterlace
 		$objOutputFile.PixelFormat = Set-OutputPixelFormat $objInputFile $PixelFormat $VideoCodec
 
@@ -215,9 +217,6 @@ ForEach ($objFile In $objInputList) {
 		If ($objInputFile.Index.Sub -gt -1) {
 			Write-Host ("Subtitle Index: " + $objInputFile.Index.Sub)
 		}
-
-		#create temporary file info object, this generate random names
-		$objTempFile = [TempFile]::new($objInputFile.FullName)
 
 		#make an array to store all filterchains
 		$objFilterChains = @()
@@ -280,29 +279,26 @@ ForEach ($objFile In $objInputList) {
 
 		#encode video
 		Write-Host -ForegroundColor Green "`nEncoding video"
-		
+
 		#show probing message
 		Write-Host -NoNewLine "Probing video. Please wait...`r"
 
 		#if we do not have a valid audio index, encode video only and continue
 		If ($objInputFile.Index.Aud -eq -1) {
-			.\bin\ffmpeg.exe -y -loglevel $LogLevel -stats -forced_subs_only ([int]$ForcedSubsOnly.ToBool()) -i $objInputFile.FullName -r $objOutputFile.FrameRate.Fraction -an -sn -c:v $VideoCodec -preset:v $VideoPreset -x265-params log-level=error -pix_fmt $objOutputFile.PixelFormat -crf:v $CRF -map [out] -filter_complex $strFilter -map_metadata -1 -map_chapters -1 $objTempFile.MP4
+			.\bin\ffmpeg.exe -y -loglevel $LogLevel -stats -forced_subs_only ([int]$ForcedSubsOnly.ToBool()) -i $objInputFile.FullName -r $objOutputFile.FrameRate.Fraction -c:v $VideoCodec -preset:v $VideoPreset -x265-params log-level=error -pix_fmt $objOutputFile.PixelFormat -crf:v $CRF -map [out] -filter_complex $strFilter -map_metadata -1 -map_chapters -1 $objTempFile.MP4
 
-			# mux video / audio
+			#mux video
 			Write-Host -ForegroundColor Green "`nMuxing"
 			New-Item -Path $objOutputFile.Directory -Type Directory -ErrorAction SilentlyContinue | Out-Null
 			.\bin\mp4box.exe -add $objTempFile.MP4 -new $objOutputFile.FullName
-
-			#remove temporary files
-			Remove-TempFiles $objTempFile
 
 			$intFileCount++
 			Continue
 		}
 
-		#we have a valid audio index, so encode video and audio
-		.\bin\ffmpeg.exe -y -loglevel $LogLevel -stats -forced_subs_only ([int]$ForcedSubsOnly.ToBool()) -i $objInputFile.FullName -r $objOutputFile.FrameRate.Fraction -an -sn -c:v $VideoCodec -preset:v $VideoPreset -x265-params log-level=error -pix_fmt $objOutputFile.PixelFormat -crf:v $CRF -map [out] -filter_complex $strFilter -map_metadata -1 -map_chapters -1 $objTempFile.MP4 `
-		-map 0:$($objInputFile.Index.Aud) -vn -sn -c:a flac -map_metadata -1 -map_chapters -1 -compression_level 0 -af aformat=sample_fmts=s16:channel_layouts=stereo:sample_rates=48000 $objTempFile.FLAC
+		#otherwise, we have a valid audio index, so encode video and audio
+		.\bin\ffmpeg.exe -y -loglevel $LogLevel -stats -forced_subs_only ([int]$ForcedSubsOnly.ToBool()) -i $objInputFile.FullName -r $objOutputFile.FrameRate.Fraction -c:v $VideoCodec -preset:v $VideoPreset -x265-params log-level=error -pix_fmt $objOutputFile.PixelFormat -crf:v $CRF -map [out] -filter_complex $strFilter -map_metadata -1 -map_chapters -1 $objTempFile.MP4 `
+		-map 0:$($objInputFile.Index.Aud) -c:a flac -map_metadata -1 -map_chapters -1 -compression_level 0 -af aformat=sample_fmts=s16:channel_layouts=stereo:sample_rates=48000 $objTempFile.FLAC
 
 		#encode audio
 		Write-Host -ForegroundColor Green "`nEncoding audio"
@@ -319,13 +315,13 @@ ForEach ($objFile In $objInputList) {
 		New-Item -Path $objOutputFile.Directory -Type Directory -ErrorAction SilentlyContinue | Out-Null
 		.\bin\mp4box.exe -add $objTempFile.MP4 -add $objTempFile.M4A -new $objOutputFile.FullName
 	}
-	#always remove temporary files before finishing
 	Finally {
+		#increment processed file counter
+		$intFileCount++
+		
+		#always remove temporary files before finishing
 		Remove-TempFiles $objTempFile
 	}
-
-	#increment processed file counter
-	$intFileCount++
 }
 
 #show completed message if needed
