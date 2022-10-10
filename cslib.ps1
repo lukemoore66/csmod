@@ -51,25 +51,39 @@ Class FrameRate {
 	FrameRate() {}
 
 	FrameRate([float]$Decimal) {
-		$This.Decimal = $Decimal
-		$This.Fraction = '{0}/1' -f $Decimal.ToString()
+		#always round the decimal representation to 3 decimal places
+		$This.Decimal = [Math]::Round($Decimal, 3)
+		
+		#make the fractional representation always use integers
+		$This.Fraction = '{0}/1000' -f ($Decimal * 1000)
 	}
 
 	FrameRate([string]$Fraction) {
+		#the fraction will always use integers because of Check-FrameRate
 		$This.Fraction = $Fraction
-
+		
+		#always round the decimal representation to 3 decimal places
 		$arrFraction = $Fraction.Split('/')
-		$This.Decimal = $arrFraction[0] / $arrFraction[1]
+		$intFractionNum = [int]$arrFraction[0]
+		$intFractionDen = [int]$arrFraction[1]
+		$decFraction = [Math]::Round(($intFractionNum / $intFractionDen), 3)
+		$This.Decimal = $decFraction
 	}
 
 	[string]ToString() {
+		#the format operator rounds automatically
 		Return '{0:n3}' -f $This.Decimal
 	}
 
 	[void]SetToFieldRate() {
-		$This.Decimal *= 2
+		#always round the decimal representation to 3 decimal places
+		$This.Decimal = [Math]::Round(($This.Decimal * 2), 3)
+		
+		#the fraction will always use integers because of Check-FrameRate
+		#additionally, this can only be performed after the object has been created
+		#meaning it will always use integers based on what the constructors do
 		$arrFraction = $This.Fraction -Split '/'
-		$This.Fraction =  '{0}/{1}' -f ([float]$arrFraction[0] * 2), $arrFraction[1]
+		$This.Fraction =  '{0}/{1}' -f ([int]$arrFraction[0] * 2), $arrFraction[1]
 
 		Return
 	}
@@ -304,10 +318,15 @@ Function Get-VideoResolution ($objFFInfo, $objInputFile) {
 }
 
 Function Get-VideoDuration ($objFFInfo, $objInputFile) {
-	#use the duration tag if it is available
+	#use the video duration metadata if it is available
+	$strDuration = $objFFInfo.streams[$objInputFile.Index.Vid].duration
+	If ($strDuration) {
+		Return [Duration]::new($strDuration, $True)
+	}
+	
+	#use the video stream duration tag if it is available
 	$strDuration = $objFFInfo.streams[$objInputFile.Index.Vid].tags | Select-Object -ExpandProperty DURATION* -First 1 -ErrorAction SilentlyContinue
-
-	If($strDuration) {
+	If ($strDuration) {
 		Return [Duration]::new($strDuration, $True)
 	}
 
@@ -316,50 +335,108 @@ Function Get-VideoDuration ($objFFInfo, $objInputFile) {
 }
 
 Function Get-FrameCount ($objFFInfo, $objInputFile) {
-	#check for frame count metadata first
-	[int]$intFrameCount = $objFFInfo.streams[$objInputFile.Index.Vid].tags | Select-Object -ExpandProperty NUMBER_OF_FRAMES* -First 1 -ErrorAction SilentlyContinue
-
-	#use frame count metadata if it is available
+	#use the video stream metadata if it is available
+	[int]$intFrameCount = $objFFInfo.streams[$objInputFile.Index.Vid].nb_frames
 	If ($intFrameCount) {
 		Return [FrameCount]::new($intFrameCount, $True)
 	}
-	#otherwise, derive the frame count manually
-	Else {
-		$floatDuration = $objInputFile.Duration.Seconds
-		$floatFrameRate = (Get-InputFrameRate $objFFInfo $objInputFile).Decimal
-		$intFrameCount = [int]($floatDuration * $floatFrameRate)
-
-		Return [FrameCount]::new($intFrameCount, $False)
+	
+	#use the video stream tag if it is available
+	[int]$intFrameCount = $objFFInfo.streams[$objInputFile.Index.Vid].tags | Select-Object -ExpandProperty NUMBER_OF_FRAMES* -First 1 -ErrorAction SilentlyContinue
+	If ($intFrameCount) {
+		Return [FrameCount]::new($intFrameCount, $True)
 	}
+	
+	#otherwise, derive the frame count manually
+	$floatDuration = $objInputFile.Duration.Seconds
+	$floatFrameRate = (Get-InputFrameRate $objFFInfo $objInputFile).Decimal
+	$intFrameCount = [int]($floatDuration * $floatFrameRate)
+
+	Return [FrameCount]::new($intFrameCount, $False)
 }
 
 Function Get-InputFrameRate ($objFFInfo, $objInputFile) {
+	#use the video stream metadata if it is available
+	$strFrameRate = [string]$objFFInfo.Streams[$objInputFile.Index.Vid].r_frame_rate
+	
+	If ($strFrameRate) {
+		Return [FrameRate]::new($strFrameRate)
+	}
+	
 	#if the video stream contains both duration and frame count metadata,
 	#calculate the frame rate using that data
 	If ($objInputFile.Duration.IsMetaData -and $objInputFile.FrameCount.IsMetadata) {
 		$floatFrameRate = [float]($objInputFile.FrameCount.Count / $objInputFile.Duration.Seconds)
-
 		Return [FrameRate]::new($floatFrameRate)
 	}
-
-	#otherwise, just use ffmpeg's reported frame rate for the input frame rate
-	$strFrameRate = [string]$objFFInfo.Streams[$objInputFile.Index.Vid].r_frame_rate
-
-	Return [FrameRate]::new($strFrameRate)
 }
 
-Function Set-OutputFrameRate ($objInputFile, $floatFrameRate, $intDeinterlace) {
+Function Set-OutputFrameRate ($objInputFile, $strFrameRate, $intDeinterlace) {
 	#if the frame rate is manually defined, use that
-	If ($floatFrameRate -ne -1.0) {
-		$objFrameRate = [FrameRate]::New($floatFrameRate)
+	If ($strFrameRate -ne 'auto') {
+		#if the frame rate is fractional
+		If ($strFrameRate -match '/') {
+			#construct the frame rate using a fraction
+			$objFrameRate = [FrameRate]::New($strFrameRate)
+		}
+		#otherwise, the frame rate is a decimal
+		Else {
+			#construct the frame rate using a decimal
+			$objFrameRate = [FrameRate]::New([decimal]$strFrameRate)
+		}
 	}
 	#otherwise, use the input frame rate
 	Else {
 		$objFrameRate = [FrameRate]::New()
 		$objFrameRate.Decimal = $objInputFile.FrameRate.Decimal
 		$objFrameRate.Fraction = $objInputFile.FrameRate.Fraction
+		
+		#make sure the output frame rate matches common standards
+		#make a hash table of standard frame rates, they must be ordered from lowest to highest
+		$hashCommonFrameRates = [ordered]@{
+			'24000/1001' = 23.976
+			'24/1' = 24
+			'25/1' = 25
+			'30000/1001' = 29.97
+			'30/1' = 30
+			'60000/1001' = 59.97
+			'60/1' = 60
+		}
+		
+		#check if we are dealing with a common frame rate
+		$boolIsCommonFrameRate = $False
+		ForEach ($decCommonFrameRate in $hashCommonFrameRates.Values) {
+			If ($decCommonFrameRate -eq [decimal]$objFrameRate.Decimal) {
+				#we have a common frame rate match
+				$boolIsCommonFrameRate = $True
+				
+				Break
+			}
+		}
+		
+		#if we have a non-standard frame rate
+		If (-not $boolIsCommonFrameRate) {
+			Write-Warning ('Non-standard input frame rate: ({0}). Please review output file upon completion.' -f $objFrameRate.Fraction)
+			
+			#try to use the lowest common denominator in the common frame rate list
+			ForEach ($objCommonFrameRate in $hashCommonFrameRates.GetEnumerator()) {
+				$decCommonFrameRate = [decimal]$objCommonFrameRate.Value
+				$strCommonFrameRate = $objCommonFrameRate.Key
+				
+				#if the modulus is 0, the frame rates are divisible by each other
+				If (-not ($objFrameRate.Decimal % $decCommonFrameRate)) {
+					#we have a frame rate match, use that as the frame rate
+					Write-Warning "Switching output frame rate to lowest decimated standard frame rate: ($strCommonFrameRate)."
+					
+					$objFrameRate.Decimal = $decCommonFrameRate
+					$objFrameRate.Fraction = $strCommonFrameRate
+					
+					Break
+				}
+			}
+		}
 	}
-
+	
 	#if we are deinterlacing in mode 1, set the frame rate to the field rate
 	If ($intDeinterlace -eq 2) {
 		$objFrameRate.SetToFieldRate()
@@ -370,7 +447,7 @@ Function Set-OutputFrameRate ($objInputFile, $floatFrameRate, $intDeinterlace) {
 
 Function Get-VideoIndex ($objFFInfo, $VideoIndex) {
 	#get a list of video streams
-	$objVideoStreams = $objFFInfo.streams | Where-Object {($_.codec_type -eq 'video') -and ($_.disposition.attached_pic -ne 1)}
+	$objVideoStreams = $objFFInfo.streams | Where-Object {($_.codec_type -eq 'video') -and ($_.disposition.attached_pic -ne 1) -and ($_.disposition.still_image -eq 0)}
 
 	#no video streams
 	If (-not $objVideoStreams) {
@@ -759,7 +836,7 @@ Function Set-Scale ($objFFInfo, $objInputFile, $objPrevFilter, $Round, $ForceRes
 		If ($floatOutputWidth -gt $intMaxWidth) {
 			#downscale according to the max input width
 			$floatOutputWidth = $intMaxWidth
-			$floatOuputHeight = $floatOutputWidth * $floatDAR
+			$floatOutputHeight = $floatOutputWidth * (1 / $floatDAR)
 		}
 	}
 	#otherwise, the output width is less than the output height
@@ -1384,19 +1461,51 @@ Function Check-Replace ($strReplace) {
 	Return $arrReplace
 }
 
-Function Check-FrameRate ($floatFrameRate) {
-	#we are using the source frame rate, leave at -1.0
-	If ([float]$floatFrameRate -eq -1.0) {
-		Return $floatFrameRate
+Function Check-FrameRate ($FrameRate) {
+	$strFrameRate = [string]$FrameRate.ToLower().Trim()
+	
+	#if the frame rate is set to auto
+	If (($strFrameRate -eq 'auto') -or [string]::IsNullOrEmpty($strFrameRate)) {
+		Return 'auto'
 	}
-
-	#frame rate is invalid, show error
-	If ($floatFrameRate -le 0.0) {
-		Throw ('Invalid value for frame rate: {0}, please use a number greater than 0.0 and no larger than 1000.0.' -f $floatFrameRate)
+	
+	#otherwise, get the frame rate automatically
+	#define min and max frame rate values
+	$decFrameRateMin = 0.0
+	$decFrameRateMax = 1000.0
+	
+	#check for a valid fraction
+	#make sure we have a numerator and denominator
+	$arrFrameRate = $strFrameRate.Split('/')
+	If ($arrFrameRate.Count -eq 2) {
+		Try {
+			$decNumerator = [decimal]$arrFrameRate[0]
+			$decDenominator = [decimal]$arrFrameRate[1]
+		}
+		Catch {
+			Throw ("Invalid fractional value for frame rate: ($strFrameRate).")
+		}
+		
+		Return $strFrameRate
 	}
-
-	#return formatted frame rate string
-	Return "{0:n3}" -f $floatFrameRate
+	#otherwise, we do not have a valid fraction
+	Else {
+		#try converting to a decimal value
+		Try {
+			$decFrameRate = [decimal]$strFrameRate
+		}
+		Catch {
+			Throw ("Invalid decimal value for frame rate: ($strFrameRate.)")
+		}
+		
+		#if the frame rate is less than or equal to min or greater than max
+		If (($decFrameRate -le $decFrameRateMin) -or ($decFrameRate -gt $decFrameRateMax)) {
+			#it is invalid
+			Throw ("Invalid decimal value for frame rate: ($strFrameRate). Please use a value between $decFrameRateMin and $decFrameRateMax.")
+		}
+		
+		Return $strFrameRate
+	}
 }
 
 Function Check-Path ($strInputPath) {
