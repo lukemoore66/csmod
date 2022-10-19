@@ -25,7 +25,7 @@
 	[ValidatePattern('^\d{1,4}x\d{1,4}$')] [string] $MinRes = '64x64',
 	[ValidatePattern('^\d{1,4}x\d{1,4}$')] [string] $MaxRes = '1920x1080',
 	[string[]] $Replace,
-	[ValidateRange(0, 128)] [int] $Round = 8,
+	[ValidateRange(2, 16)] [int] $Round = 8,
 	[Switch] $NoCrop,
 	[Switch] $NoScale,
 	[string] $ShowQuery,
@@ -37,7 +37,8 @@
 	[ValidateSet('libx264', 'libx265')] [string] $VideoCodec = 'libx265',
 	[ValidatePattern('^(?i)(error|info|debug)$')] [string] $LogLevel = 'error',
 	[ValidateSet('auto', 'yuv420p', 'yuv420p10le')] [string] $PixelFormat = 'auto',
-	[string] $FrameRate = 'auto',
+	[string] $FrameRateIn = 'auto',
+	[string] $FrameRateOut = 'auto',
 	[Switch] $ForcedSubsOnly,
 	[Switch] $NoNormalize,
 	[ValidateSet(0, 1, 2)] [int] $Deinterlace = 0,
@@ -50,16 +51,20 @@ If ($PSVersionTable.PSVersion.Major -lt $intPSMinimumVersion) {
 	Throw ("This script requires PowerShell v$intPSMinimumVersion and up to run.")
 }
 
-#make we are sure running from script directory
-If ((Get-Location).Path -ne $PSScriptRoot) {
-	Throw ("This script can only be run from it's own directory: '" + $PSScriptRoot + "'")
-}
+#set executable / module paths
+$Script:strCsLibPath = '{0}\cslib.ps1' -f $PSScriptRoot
+$Script:strFFmpegPath = '{0}\bin\ffmpeg.exe' -f $PSScriptRoot
+$Script:strFFprobePath = '{0}\bin\ffprobe.exe' -f $PSScriptRoot
+$Script:strQaacPath = '{0}\bin\qaac64.exe' -f $PSScriptRoot
+$Script:strAACGainPath = '{0}\bin\aacgain.exe' -f $PSScriptRoot
+$Script:strMP4BoxPath = '{0}\bin\mp4box.exe' -f $PSScriptRoot
 
-#import functions and classes
-. .\cslib.ps1
+#dot source functions and classes
+. $strCsLibPath
 
 #import ini parameters (overwrites command line parameters)
-$objParameters = ((Get-Command -Name $MyInvocation.InvocationName).Parameters).Keys
+$strInvocationName = '{0}\{1}' -f $PSScriptRoot ,$MyInvocation.MyCommand
+$objParameters = ((Get-Command -Name $strInvocationName).Parameters).Keys
 
 Process-INI $INIPath $objParameters
 
@@ -73,7 +78,8 @@ Set-Variable -Name Replace -Value (Check-Replace $Replace)
 Set-Variable -Name AudioLang -Value (Check-Lang $AudioLang)
 Set-Variable -Name SubLang -Value (Check-Lang $SubLang)
 Set-Variable -Name ScrapeLang -Value (Check-Lang $ScrapeLang)
-Set-Variable -Name FrameRate -Value (Check-FrameRate $FrameRate)
+Set-Variable -Name FrameRateIn -Value (Check-FrameRate $FrameRateIn $True)
+Set-Variable -Name FrameRateOut -Value (Check-FrameRate $FrameRateOut $False)
 Set-Variable -Name CRF -Value (Set-CRF $CRF $VideoCodec)
 
 #build a list of input files and display them
@@ -103,13 +109,12 @@ ForEach ($objFile In $objInputList) {
 		Write-Host ("`nInput path: " + $objFile.FullName)
 
 		#get info from input file
-		$objFFInfo = .\bin\ffprobe.exe -v quiet -print_format json -show_entries format=duration,stream=codec_type -show_streams $objFile.FullName | ConvertFrom-Json
+		$objFFInfo = & $strFFprobePath -v quiet -print_format json -show_entries format=duration,stream=codec_type -show_streams $objFile.FullName | ConvertFrom-Json
 
 		#show extra info and continue loop
 		If ($ShowInfo) {
 			Show-Info $objFFInfo
 
-			$intFileCount++
 			Continue
 		}
 
@@ -122,6 +127,7 @@ ForEach ($objFile In $objInputList) {
 
 		#get video index
 		$objInputFile.Index.Vid = Get-VideoIndex $objFFInfo $VideoIndex
+		
 		#create temporary file info object, this generate random names
 		$objTempFile = [TempFile]::new($objInputFile.FullName)
 
@@ -177,7 +183,6 @@ ForEach ($objFile In $objInputList) {
 		If (($NoOverwrite) -and (Test-Path -LiteralPath $objOutputFile.FullName)) {
 			Write-Host "Output file exists. Skipping..."
 
-			$intFileCount++
 			Continue
 		}
 
@@ -186,14 +191,12 @@ ForEach ($objFile In $objInputList) {
 			New-Item -Path $objOutputFile.Directory -Type Directory -ErrorAction SilentlyContinue | Out-Null
 			Move-Item -Force -LiteralPath $objInputFile.FullName -Destination $objOutputFile.FullName
 
-			$intFileCount++
 			Continue
 		}
 
 		#fill input properties
 		$objInputFile.Duration = Get-VideoDuration $objFFInfo $objInputFile
-		$objInputFile.FrameCount = Get-FrameCount $objFFInfo $objInputFile
-		$objInputFile.FrameRate = Get-InputFrameRate $objFFInfo $objInputFile
+		$objInputFile.FrameRate = Get-InputFrameRate $objFFInfo $objInputFile $FrameRateIn
 		$objInputFile.Resolution = Get-VideoResolution $objFFInfo $objInputFile
 		$objInputFile.PixelFormat = Get-PixelFormat $objFFInfo $objInputFile
 
@@ -202,8 +205,11 @@ ForEach ($objFile In $objInputList) {
 		$objInputFile.Index.Sub = Get-SubIndex $objFFInfo $SubIndex $SubLang $SubTitle $Subs
 
 		#fill output properties
-		$objOutputFile.FrameRate = Set-OutputFrameRate $objInputFile $FrameRate $Deinterlace
+		$objOutputFile.FrameRate = Set-OutputFrameRate $objInputFile $FrameRateOut $Deinterlace
 		$objOutputFile.PixelFormat = Set-OutputPixelFormat $objInputFile $PixelFormat $VideoCodec
+		
+		#get fonts
+		Get-Fonts $objFFInfo $objInputFile $objTempFile
 
 		#show duration
 		Write-Host ("`nVideo Duration: " + $objInputFile.Duration.Sexagesimal + "`n")
@@ -217,6 +223,12 @@ ForEach ($objFile In $objInputList) {
 		If ($objInputFile.Index.Sub -gt -1) {
 			Write-Host ("Subtitle Index: " + $objInputFile.Index.Sub)
 		}
+		
+		#set ffmpeg's input / output frame rate options
+		$objFROpts = Set-FrameRateOpts $objInputFile.FrameRate $objOutputFile.FrameRate $FrameRateIn
+		
+		#show frame rates
+		Write-Host ("`nFrame Rate (Input | Output): {0} | {1}" -f $objInputFile.FrameRate.Fraction, $objFROpts.OutVal)
 
 		#make an array to store all filterchains
 		$objFilterChains = @()
@@ -260,10 +272,8 @@ ForEach ($objFile In $objInputList) {
 		#construct the full filter string
 		$objFilterChains += Get-FilterChainString $objFilterChain
 
-		$objFilterChain | % {
-			If ($_.FilterChain) {
-				$objFilterChains += Get-FilterChainString $_.FilterChain
-			}
+		$objFilterChain | Where-Object {$_.FilterChain} | % {
+			$objFilterChains += Get-FilterChainString $_.FilterChain
 		}
 
 		$strFilter = $objFilterChains -join ';'
@@ -272,10 +282,7 @@ ForEach ($objFile In $objInputList) {
 		Write-Host ("`nFilter Chain: " + (Unescape-Filter $strFilter))
 
 		#show ffmpeg version
-		Write-Host ("`n" + (.\bin\ffmpeg -version | Select-Object -First 1).Trim())
-
-		#get fonts
-		Get-Fonts $objFFInfo $objInputFile $objTempFile
+		Write-Host ("`n" + (& $strFFmpegPath -version | Select-Object -First 1).Trim())
 
 		#encode video
 		Write-Host -ForegroundColor Green "`nEncoding video"
@@ -285,35 +292,34 @@ ForEach ($objFile In $objInputList) {
 
 		#if we do not have a valid audio index, encode video only and continue
 		If ($objInputFile.Index.Aud -eq -1) {
-			.\bin\ffmpeg.exe -y -loglevel $LogLevel -stats -forced_subs_only ([int]$ForcedSubsOnly.ToBool()) -i $objInputFile.FullName -r $objOutputFile.FrameRate.Fraction -c:v $VideoCodec -preset:v $VideoPreset -x265-params log-level=error -pix_fmt $objOutputFile.PixelFormat -crf:v $CRF -map [out] -filter_complex $strFilter -map_metadata -1 -map_chapters -1 $objTempFile.MP4
+			& $strFFmpegPath -y -loglevel $LogLevel -stats -forced_subs_only ([int]$ForcedSubsOnly.ToBool()) $objFROpts.InOpt $objFROpts.InVal -i $objInputFile.FullName $objFROpts.OutOpt $objFROpts.OutVal -c:v $VideoCodec -preset:v $VideoPreset -x265-params log-level=error -pix_fmt $objOutputFile.PixelFormat -crf:v $CRF -map [out] -filter_complex $strFilter -map_metadata -1 -map_chapters -1 $objTempFile.MP4
 
 			#mux video
 			Write-Host -ForegroundColor Green "`nMuxing"
 			New-Item -Path $objOutputFile.Directory -Type Directory -ErrorAction SilentlyContinue | Out-Null
-			.\bin\mp4box.exe -add $objTempFile.MP4 -new $objOutputFile.FullName
+			& $strMP4BoxPath -add $objTempFile.MP4 -new $objOutputFile.FullName
 
-			$intFileCount++
 			Continue
 		}
 
 		#otherwise, we have a valid audio index, so encode video and audio
-		.\bin\ffmpeg.exe -y -loglevel $LogLevel -stats -forced_subs_only ([int]$ForcedSubsOnly.ToBool()) -i $objInputFile.FullName -r $objOutputFile.FrameRate.Fraction -c:v $VideoCodec -preset:v $VideoPreset -x265-params log-level=error -pix_fmt $objOutputFile.PixelFormat -crf:v $CRF -map [out] -filter_complex $strFilter -map_metadata -1 -map_chapters -1 $objTempFile.MP4 `
+		& $strFFmpegPath -y -loglevel $LogLevel -stats -forced_subs_only ([int]$ForcedSubsOnly.ToBool()) $objFROpts.InOpt $objFROpts.InVal -i $objInputFile.FullName $objFROpts.OutOpt $objFROpts.OutVal -c:v $VideoCodec -preset:v $VideoPreset -x265-params log-level=error -pix_fmt $objOutputFile.PixelFormat -crf:v $CRF -map [out] -filter_complex $strFilter -map_metadata -1 -map_chapters -1 $objTempFile.MP4 `
 		-map 0:$($objInputFile.Index.Aud) -c:a flac -map_metadata -1 -map_chapters -1 -compression_level 0 -af aformat=sample_fmts=s16:channel_layouts=stereo:sample_rates=48000 $objTempFile.FLAC
 
 		#encode audio
 		Write-Host -ForegroundColor Green "`nEncoding audio"
-		.\bin\qaac64.exe $objTempFile.FLAC -V($AudioQuality) -q 2 -o $objTempFile.M4A
+		& $strQaacPath $objTempFile.FLAC -V($AudioQuality) -q 2 -o $objTempFile.M4A
 
 		#apply gain
 		If (-not $NoNormalize) {
 			Write-Host -ForegroundColor Green "`nApplying ReplayGain"
-			.\bin\aacgain.exe /r /k $objTempFile.M4A
+			& $strAACGainPath /r /k $objTempFile.M4A
 		}
 
 		# mux video / audio
 		Write-Host -ForegroundColor Green "`nMuxing"
 		New-Item -Path $objOutputFile.Directory -Type Directory -ErrorAction SilentlyContinue | Out-Null
-		.\bin\mp4box.exe -add $objTempFile.MP4 -add $objTempFile.M4A -new $objOutputFile.FullName
+		& $strMP4BoxPath -add $objTempFile.MP4 -add $objTempFile.M4A -new $objOutputFile.FullName
 	}
 	Finally {
 		#increment processed file counter
