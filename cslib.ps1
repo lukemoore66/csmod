@@ -379,7 +379,7 @@ Function Set-OutputFrameRate ($objInputFile, $strFrameRate, $intDeinterlace) {
 			'25/1' = 25
 			'30000/1001' = 29.97
 			'30/1' = 30
-			'60000/1001' = 59.97
+			'60000/1001' = 59.94
 			'60/1' = 60
 		}
 		
@@ -390,8 +390,8 @@ Function Set-OutputFrameRate ($objInputFile, $strFrameRate, $intDeinterlace) {
 			$objCommonFrameRateEntry = $hashCommonFrameRates.GetEnumerator() | Where-Object {-not ($objFrameRate.Decimal % [decimal]$_.Value)} | Select-Object -First 1
 			
 			If ($objCommonFrameRateEntry) {
-				Write-Warning ('Switching output frame rate to lowest common frame rate: ({0}).' -f $strCommonFrameRate.Key)
-				$objFrameRate.Fraction = $strCommonFrameRate.Key
+				Write-Warning ('Switching output frame rate to lowest common frame rate: ({0}).' -f $objCommonFrameRateEntry.Key)
+				$objFrameRate.Fraction = $objCommonFrameRateEntry.Key
 				$objFrameRate.Decimal = $objCommonFrameRateEntry.Value
 				$objFrameRate.Mode = 'cfr'
 			}
