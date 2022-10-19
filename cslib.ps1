@@ -944,8 +944,8 @@ Function Get-PlayRes ($objFFInfo, $objInputFile, $objSubFilter, $objTempFile) {
 	
 	#get the content of the [Script Info] section
 	$objASSContent = Get-Content -LiteralPath $objTempFile.ASS
-	$strPlayResX = $objASSContent | Where-Object {$_ -imatch '^\s*?(PlayResX)\s*?:\s*?\d*?\s*?$'}
-	$strPlayResY = $objASSContent | Where-Object {$_ -imatch '^\s*?(PlayResY)\s*?:\s*?\d*?\s*?$'}
+	$strPlayResX = $objASSContent | Where-Object {$_ -imatch '^\s*?(PlayResX)\s*?:\s*?\d*?\s*?$'} | Select-Object -First 1
+	$strPlayResY = $objASSContent | Where-Object {$_ -imatch '^\s*?(PlayResY)\s*?:\s*?\d*?\s*?$'} | Select-Object -First 1
 	
 	#if either of the playres strings do not exist
 	If ([string]::IsNullOrEmpty($strPlayResX) -or [string]::IsNullOrEmpty($strPlayResY)) {
