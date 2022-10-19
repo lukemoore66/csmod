@@ -113,7 +113,8 @@ Class Duration {
 	[string]$Sexagesimal
 
 	Duration () {
-		$This.Sexagesimal = '00:00:00.000'
+		#this respects the system locale
+		$This.Sexagesimal = '{0:d2}:{1:d2}:{2:n3}' -f 0, 0, 0
 	}
 
 	Duration (
@@ -1311,16 +1312,23 @@ Function Convert-ToSexagesimal ([ValidateRange(0.0, [float]::MaxValue)][float]$D
 	[int]$intMins = [Math]::Truncate($Duration / 60) - ($intHours * 60)
 	[float]$floatSecs = $Duration - ($intHours * 3600) - ($intMins * 60)
 	
-	$strHours = $intHours.ToString("00")
-	$strMins = $intMins.ToString("00")
-	$strSecs = $floatSecs.ToString("00.000")
+	$strHours = '{0:d2}' -f $intHours
+	$strMins = '{0:d2}' -f $intMins
+	$strSecs = '{0:n3}' -f $floatSecs
 
 	Return '{0}:{1}:{2}' -f $strHours, $strMins, $strSecs
 }
 
-Function Convert-FromSexagesimal ([ValidatePattern("^\d{2}\:\d{2}\:\d{2}\.\d+$")][string]$strDuration) {
-	If (-not $strDuration) {
+Function Convert-FromSexagesimal ([string]$strDuration) {
+	If ([String]::IsNullOrEmpty($strDuration)) {
 		Return [float]0.0
+	}
+	
+	$strDecimalSeperator = (Get-Culture).NumberFormat.NumberDecimalSeparator
+	$strDurationPattern = '^\d{2}\:\d{2}\:\d{2}\' + $strDecimalSeperator + '\d+$'
+	
+	If ($strDuration -notmatch $strDurationPattern) {
+		Throw('Invalid input format for Duration: ' + $strDuration)
 	}
 
 	$arrDuration = $strDuration.Split(':')
@@ -1328,12 +1336,15 @@ Function Convert-FromSexagesimal ([ValidatePattern("^\d{2}\:\d{2}\:\d{2}\.\d+$")
 	$intHours = [int]$arrDuration[0] * 60 * 60
 	$intMins = [int]$arrDuration[1] * 60
 
-	$arrSecsAndMils = $arrDuration[2].Split('.')
+	$arrSecs = $arrDuration[2].Split($strDecimalSeperator)
 
-	$intSecs = [int]$arrSecsAndMils[0]
-	$floatMils = [float]('0.' + $arrSecsAndMils[1])
+	$intSecsWhole = [int]$arrSecs[0]
+	
+	$intSecsFractional = [int]$arrSecs[1]
+	$floatSecsFractional = [float]($intSecsFractional / 1000)
+	$floatSecsFractional = [Math]::Round($floatSecsFractional, 3)
 
-	Return [float]($intHours + $intMins + $intSecs) + $floatMils
+	Return [float]($intHours + $intMins + $intSecsWhole) + $floatSecsFractional
 }
 
 #round integers to arbitrary values
