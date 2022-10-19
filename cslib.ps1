@@ -1337,7 +1337,7 @@ Function Convert-FromSexagesimal ([string]$strDuration) {
 	$floatMins = [float]$arrDuration[1] * 60
 	$floatSecs = [Math]::Round([float]$arrDuration[2], 3)
 
-	Return [float]($floatHours + $floatMins + $floatSecs)
+	Return ($floatHours + $floatMins + $floatSecs)
 }
 
 #round integers to arbitrary values
