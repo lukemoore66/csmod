@@ -1333,18 +1333,11 @@ Function Convert-FromSexagesimal ([string]$strDuration) {
 
 	$arrDuration = $strDuration.Split(':')
 
-	$intHours = [int]$arrDuration[0] * 60 * 60
-	$intMins = [int]$arrDuration[1] * 60
+	$floatHours = [float]$arrDuration[0] * 60 * 60
+	$floatMins = [float]$arrDuration[1] * 60
+	$floatSecs = [Math]::Round([float]$arrDuration[2], 3)
 
-	$arrSecs = $arrDuration[2].Split($strDecimalSeperator)
-
-	$intSecsWhole = [int]$arrSecs[0]
-	
-	$intSecsFractional = [int]$arrSecs[1]
-	$floatSecsFractional = [float]($intSecsFractional / 1000)
-	$floatSecsFractional = [Math]::Round($floatSecsFractional, 3)
-
-	Return [float]($intHours + $intMins + $intSecsWhole) + $floatSecsFractional
+	Return [float]($floatHours + $floatMins + $floatSecs)
 }
 
 #round integers to arbitrary values
