@@ -1,12 +1,12 @@
 Param (
-	[ValidateScript({Test-Path -LiteralPath $_})] [String] $InputListPath = ('{0}\tcsi.txt' -f $PSScriptRoot),
+	[ValidateScript({ Test-Path -LiteralPath $_ })] [String] $InputListPath = ('{0}\tcsi.txt' -f $PSScriptRoot),
 	[switch] $ExitIfEmpty
 )
 
 #exit if other instances are running
 $strCommand = '*{0}*' -f $MyInvocation.MyCommand
-$objOtherProcess = Get-Process | Where-Object {($_.Name -eq 'pwsh') -and ($_.CommandLine -like $strCommand) -and ($_.Id -ne $PID)}
-If ($objOtherProcess) {Stop-Process -Id $PID}
+$objOtherProcess = Get-Process | Where-Object { ($_.Name -eq 'pwsh') -and ($_.CommandLine -like $strCommand) -and ($_.Id -ne $PID) }
+If ($objOtherProcess) { Stop-Process -Id $PID }
 
 #set executable / module paths
 $Script:strCsLibPath = '{0}\cslib.ps1' -f $PSScriptRoot
@@ -49,7 +49,7 @@ ForEach ($strLine in (Get-Content -LiteralPath $InputListPath)) {
 	#if the torrent is a folder
 	If ((Get-Item -LiteralPath $arrLine[0]).PSIsContainer) {
 		#get the video files and add to the torrent list
-		Get-ChildItem -LiteralPath $arrLine[0] -Recurse -File | Where-Object {$InputFormats -Contains $_.Extension} | ForEach-Object {
+		Get-ChildItem -LiteralPath $arrLine[0] -Recurse -File | Where-Object { $InputFormats -Contains $_.Extension } | ForEach-Object {
 			$strLine = '{0}|{1}' -f $_.FullName, $arrLine[1]
 			$objTorrentList.Add($strLine)
 		}
@@ -71,7 +71,7 @@ Set-Content -LiteralPath $InputListPath -Value $objTorrentList
 $objInputList = [Ordered]@{}
 
 #build input list
-Get-Content -LiteralPath $InputListPath | % {
+Get-Content -LiteralPath $InputListPath | ForEach-Object {
 	$arrLine = $_.Split('|')
 	$objInputList.Add($arrLine[0], (Get-INIPath $arrLine[0] $arrLine[1]))
 }
@@ -86,10 +86,15 @@ If ($objInputList.Count -lt 1) {
 	}
 }
 
+#show the input list
+"Input Files:"
+$objInputList.Keys
+''
+
 #loop through input list
 $intFileCount = 1
 $intTotalFileCount = 
-$objInputList.GetEnumerator() | % {
+$objInputList.GetEnumerator() | ForEach-Object {
 	#show progress
 	$strProgress = "`nProcessing File {0} of {1}" -f $intFileCount, $objInputList.Count
 	$strLines = "`n" + ("=" * $strProgress.Length)
@@ -102,7 +107,7 @@ $objInputList.GetEnumerator() | % {
 	$strInputListLine = $_.Key + '|' + (Get-Item -LiteralPath $_.Value).BaseName
 	
 	#remove current input line from input list
-	Set-Content -LiteralPath $InputListPath -Value (Get-Content -LiteralPath $InputListPath | Where-Object {$_ -iNotMatch [Regex]::Escape($strInputListLine)})
+	Set-Content -LiteralPath $InputListPath -Value (Get-Content -LiteralPath $InputListPath | Where-Object { $_ -iNotMatch [Regex]::Escape($strInputListLine) })
 	
 	#write current input line to the output log
 	Add-Content -LiteralPath $OutputLogPath -Value ((Get-Date).ToString() + '|' + $strInputListLine)
@@ -115,6 +120,6 @@ $objInputList.GetEnumerator() | % {
 	$intFileCount++
 }
 
-If ($objInputList.Count -gt 0)  {
+If ($objInputList.Count -gt 0) {
 	Write-Host "`nAll Torrents Processed."
 }

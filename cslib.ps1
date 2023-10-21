@@ -29,7 +29,7 @@ Class BaseName {
 		[string]$Replace
 	) {
 		$This.BaseName = $BaseName
-		$This.Clean = Clean-BaseName $BaseName $Replace
+		$This.Clean = Format-BaseName $BaseName $Replace
 	}
 
 	[string]ToString() {
@@ -51,21 +51,21 @@ Class FrameRate {
 
 	FrameRate() {}
 
-	FrameRate([string]$Input, [bool]$IsInput) {
+	FrameRate([string]$InputFrameRate, [bool]$IsInput) {
 		$This.IsInput = $IsInput
 		
 		#if we have specified vfr mode
-		If ($Input -eq 'vfr') {
+		If ($InputFrameRate -eq 'vfr') {
 			#set the mode to vfr
-			$This.Mode = $Input
+			$This.Mode = $InputFrameRate
 		}
 		#check if the input is fractional
-		#the fraction will always be valid because of Check-FrameRate
-		ElseIf ($Input -match '/') {
-			$This.Fraction = $Input
+		#the fraction will always be valid because of Set-FrameRate
+		ElseIf ($InputFrameRate -match '/') {
+			$This.Fraction = $InputFrameRate
 			
 			#always round the decimal representation to 3 decimal places
-			$arrFraction = $Input.Split('/')
+			$arrFraction = $InputFrameRate.Split('/')
 			$This.Decimal = [Math]::Round(([int]$arrFraction[0] / [int]$arrFraction[1]), 3)
 			
 			$This.Mode = 'cfr'
@@ -74,7 +74,7 @@ Class FrameRate {
 		Else {
 			#always round the decimal representation to 3 decimal places
 			#this allows the fractional representation to always use integers when using 1000 as the denominator
-			$This.Decimal = [Math]::Round($Input, 3)
+			$This.Decimal = [Math]::Round($InputFrameRate, 3)
 		
 			#make the fractional representation always use integers
 			$This.Fraction = '{0}/1000' -f [Math]::Round(($This.Decimal * 1000))
@@ -98,11 +98,11 @@ Class FrameRate {
 		#always round the decimal representation to 3 decimal places
 		$This.Decimal = [Math]::Round(($This.Decimal * 2), 3)
 		
-		#the fraction will always use integers because of Check-FrameRate
+		#the fraction will always use integers because of Set-FrameRate
 		#additionally, this can only be performed after the object has been created
 		#meaning it will always use integers based on what the constructors do
 		$arrFraction = $This.Fraction.Split('/')
-		$This.Fraction =  '{0}/{1}' -f ([int]$arrFraction[0] * 2), $arrFraction[1]
+		$This.Fraction = '{0}/{1}' -f ([int]$arrFraction[0] * 2), $arrFraction[1]
 
 		Return
 	}
@@ -212,7 +212,8 @@ Class Scrape {
 		[string]$Series,
 		[int]$Season,
 		[int]$Episode,
-		[string]$Language
+		[string]$Language,
+		[int]$EpisodeOffset
 	) {
 		$This.BaseNameClean = $BaseNameClean
 		$This.Series.ID = $SeriesID
@@ -226,7 +227,7 @@ Class Scrape {
 		}
 
 		#if we have don't have a regex match, fail and exit
-		$regPattern = [regex]::new('(s|S)\d{1,2}(e|E)\d{1,2}')
+		$regPattern = [regex]::new('(s|S)\d{1,2}(e|E)\d{1,3}')
 		$objMatch = $regPattern.Match($BaseNameClean)
 		If (-not $objMatch.Success) {
 			Write-Warning ("Could not match cleaned input name: '" + $BaseNameClean + "' for scraping. Try to match the format: 'Show Title S01E01'")
@@ -245,19 +246,19 @@ Class Scrape {
 		}
 
 		If ($This.Episode -eq -1) {
-			$This.Episode = [int]$arrMatches[1]
+			$This.Episode = [int]$arrMatches[1] + $EpisodeOffset
 		}
 
-		$This.Series = Scrape-Series $This
-		$This.Series.Name = Normalize-Name $This.Series.Name
+		$This.Series = Get-Series $This
+		$This.Series.Name = Format-Name $This.Series.Name
 
 		#if we still don't have a valid seriesid, exit
 		If ($This.Series.ID -eq -1) {
 			Return
 		}
 
-		$This.Title = Scrape-Title $This
-		$This.Title = Normalize-Name $This.Title
+		$This.Title = Get-Title $This
+		$This.Title = Format-Name $This.Title
 
 
 		$This.Success = $True
@@ -376,19 +377,19 @@ Function Set-OutputFrameRate ($objInputFile, $strFrameRate, $intDeinterlace) {
 		#make a hash table of standard frame rates, they must be ordered from lowest to highest
 		$hashCommonFrameRates = [ordered]@{
 			'24000/1001' = 23.976
-			'24/1' = 24
-			'25/1' = 25
+			'24/1'       = 24
+			'25/1'       = 25
 			'30000/1001' = 29.97
-			'30/1' = 30
+			'30/1'       = 30
 			'60000/1001' = 59.94
-			'60/1' = 60
+			'60/1'       = 60
 		}
 		
 		#if we have an uncommon frame rate
 		If ($hashCommonFrameRates.Values -notcontains [decimal]$objFrameRate.Decimal) {
 			Write-Warning ('Non-standard input frame rate: ({0}).' -f $objFrameRate.Fraction)
 			
-			$objCommonFrameRateEntry = $hashCommonFrameRates.GetEnumerator() | Where-Object {-not ($objFrameRate.Decimal % [decimal]$_.Value)} | Select-Object -First 1
+			$objCommonFrameRateEntry = $hashCommonFrameRates.GetEnumerator() | Where-Object { -not ($objFrameRate.Decimal % [decimal]$_.Value) } | Select-Object -First 1
 			
 			If ($objCommonFrameRateEntry) {
 				Write-Warning ('Switching output frame rate to lowest common frame rate: ({0}).' -f $objCommonFrameRateEntry.Key)
@@ -413,7 +414,7 @@ Function Set-OutputFrameRate ($objInputFile, $strFrameRate, $intDeinterlace) {
 
 Function Get-VideoIndex ($objFFInfo, $VideoIndex) {
 	#get a list of video streams
-	$objVideoStreams = $objFFInfo.streams | Where-Object {($_.codec_type -eq 'video') -and ($_.disposition.attached_pic -ne 1) -and ($_.disposition.still_image -eq 0)}
+	$objVideoStreams = $objFFInfo.streams | Where-Object { ($_.codec_type -eq 'video') -and ($_.disposition.attached_pic -ne 1) -and ($_.disposition.still_image -eq 0) }
 
 	#no video streams
 	If (-not $objVideoStreams) {
@@ -422,25 +423,26 @@ Function Get-VideoIndex ($objFFInfo, $VideoIndex) {
 
 	#use manually defined video index
 	If ($VideoIndex -ne -1) {
-		$intVideoIndex = ($objVideoStreams | Where-Object {$_.index -eq $VideoIndex}).index
-		If ($intVideoIndex -ne $Null) {
+		$intVideoIndex = ($objVideoStreams | Where-Object { $_.index -eq $VideoIndex }).index
+		If ($Null -ne $intVideoIndex) {
 			Return $intVideoIndex
 		}
 	}
 
 	#use container default video stream
-	$intDefaultIndex = ($objVideoStreams | Where-Object {$_.disposition.default -eq 1}).index | Select-Object -First 1
-	If ($intDefaultIndex -ne $Null) {
+	$intDefaultIndex = ($objVideoStreams | Where-Object { $_.disposition.default -eq 1 }).index | Select-Object -First 1
+	If ($Null -ne $intDefaultIndex) {
 		Return $intDefaultIndex
 	}
 
 	#use first highest resolution stream
 	$intHighestRes = 0
-	$objVideoStreams | ForEach {
+	$objVideoStreams | ForEach-Object {
 		$intStreamRes = $_.width * $_.height
 		If ($intStreamRes -gt $intHighestRes) {
 			$intHighestRes = $intStreamRes
 			$intResIndex = $_.index
+			Return $intResIndex
 		}
 	}
 
@@ -454,46 +456,46 @@ Function Get-SubIndex ($objFFInfo, $SubIndex, $SubLang, $SubTitle, $Subs) {
 	}
 
 	#get a list of subtitle streams
-	$objSubStreams = $objFFInfo.streams | Where-Object {$_.codec_type -eq 'subtitle'}
+	$objSubStreams = $objFFInfo.streams | Where-Object { $_.codec_type -eq 'subtitle' }
 
 	#no subtitle streams
-	If ($objSubStreams -eq $Null) {
+	If ($Null -eq $objSubStreams) {
 		Return -1
 	}
 
 	#if the subtitle index is manually defined
 	If ($SubIndex -ne -1) {
-		$intSubIndex = ($objSubStreams | Where-Object {$_.index -eq $SubIndex}).index
-		If ($intSubIndex -ne $Null) {
+		$intSubIndex = ($objSubStreams | Where-Object { $_.index -eq $SubIndex }).index
+		If ($Null -ne $intSubIndex) {
 			Return $intSubIndex
 		}
 	}
 
 	#use subtitle title
 	If ($SubTitle) {
-		$intTitleIndex = ($objSubStreams | Where-Object {$_.tags.title -eq $SubTitle}).index | Select-Object -First 1
-		If ($intTitleIndex -ne $Null) {
+		$intTitleIndex = ($objSubStreams | Where-Object { $_.tags.title -eq $SubTitle }).index | Select-Object -First 1
+		If ($Null -ne $intTitleIndex) {
 			Return $intTitleIndex
 		}
 	}
 
 	#use subtitle language
-	If ($SubLang -ne $Null) {
-		$intLangIndex = ($objSubStreams | Where-Object {$_.tags.language -eq $SubLang}).index | Select-Object -First 1
-		If ($intLangIndex -ne $Null) {
+	If ($Null -ne $SubLang) {
+		$intLangIndex = ($objSubStreams | Where-Object { $_.tags.language -eq $SubLang }).index | Select-Object -First 1
+		If ($Null -ne $intLangIndex) {
 			Return $intLangIndex
 		}
 	}
 
 	#use container default subtitle stream
-	$intDefaultIndex = ($objSubStreams | Where-Object {$_.disposition.default -eq 1}).index | Select-Object -First 1
-	If ($intDefaultIndex -ne $Null) {
+	$intDefaultIndex = ($objSubStreams | Where-Object { $_.disposition.default -eq 1 }).index | Select-Object -First 1
+	If ($Null -ne $intDefaultIndex) {
 		Return $intDefaultIndex
 	}
 
 	#use any subtitle stream
 	$intAnyIndex = ($objSubStreams | Select-Object -First 1).index
-	If ($intAnyIndex -ne $Null) {
+	If ($Null -ne $intAnyIndex) {
 		Return $intAnyIndex
 	}
 }
@@ -505,46 +507,46 @@ Function Get-AudioIndex ($objFFinfo, $AudioIndex, $AudioLang, $AudioTitle, $NoAu
 	}
 
 	#get a list of audio streams
-	$objAudioStreams = $objFFInfo.streams | Where-Object {$_.codec_type -eq 'audio'}
+	$objAudioStreams = $objFFInfo.streams | Where-Object { $_.codec_type -eq 'audio' }
 
 	#no audio streams
-	If ($objAudioStreams -eq $Null) {
+	If ($Null -eq $objAudioStreams) {
 		Return -1
 	}
 
 	#use manually defined audio index
 	If ($AudioIndex -ne -1) {
-		$intAudioIndex = ($objAudioStreams | Where-Object {$_.index -eq $AudioIndex}).index
-		If ($intAudioIndex -ne $Null) {
+		$intAudioIndex = ($objAudioStreams | Where-Object { $_.index -eq $AudioIndex }).index
+		If ($Null -ne $intAudioIndex) {
 			Return $intAudioIndex
 		}
 	}
 
 	#use audio title
 	If ($AudioTitle) {
-		$intTitleIndex = ($objAudioStreams | Where-Object {$_.tags.title -eq $AudioTitle}).index | Select-Object -First 1
-		If ($intTitleIndex -ne $Null) {
+		$intTitleIndex = ($objAudioStreams | Where-Object { $_.tags.title -eq $AudioTitle }).index | Select-Object -First 1
+		If ($Null -ne $intTitleIndex) {
 			Return $intTitleIndex
 		}
 	}
 
 	#use audio language
-	If ($AudioLang -ne $Null) {
-		$intLangIndex = ($objAudioStreams | Where-Object {$_.tags.language -eq $AudioLang}).index | Select-Object -First 1
-		If ($intLangIndex -ne $Null) {
+	If ($Null -ne $AudioLang) {
+		$intLangIndex = ($objAudioStreams | Where-Object { $_.tags.language -eq $AudioLang }).index | Select-Object -First 1
+		If ($Null -ne $intLangIndex) {
 			Return $intLangIndex
 		}
 	}
 
 	#use container default audio stream
-	$intDefaultIndex = ($objAudioStreams | Where-Object {$_.disposition.default -eq 1}).index | Select-Object -First 1
-	If ($intDefaultIndex -ne $Null) {
+	$intDefaultIndex = ($objAudioStreams | Where-Object { $_.disposition.default -eq 1 }).index | Select-Object -First 1
+	If ($Null -ne $intDefaultIndex) {
 		Return $intDefaultIndex
 	}
 
 	#use any audio stream
 	$AudioIndex = ($objAudioStreams | Select-Object -First 1).index
-	If ($AudioIndex -ne $Null) {
+	If ($Null -ne $AudioIndex) {
 		Return $AudioIndex
 	}
 }
@@ -621,14 +623,15 @@ Function Set-Crop ($objInputFile, $objPrevFilter, $ForceCrop, $NoCrop, $MinRes) 
 	#run auto crop
 	$intCropCounter = 0
 	While ($intCropCounter -lt $intTotalIterations) {
-		$intSeekSeconds =  $intCropCounter * $floatSeekChunk
+		$intSeekSeconds = $intCropCounter * $floatSeekChunk
 
 		#run ffmpeg
 		$strCropDetect = & $strFFmpegPath -skip_frame noref -vsync 0 -ss $intSeekSeconds -i $objInputFile.FullName -map ('0:' + $objInputFile.Index.Vid) -frames $intFrameAmt -vf cropdetect=limit=24:round=4 -f null nul 2>&1
 		
 		#split ffmpeg output string to get crop parameters
-		$strCrop = [regex]::Split([regex]::Split($strCropDetect, 'crop=')[-1], "`r`n")[0].Trim()
-		$strCrop = $strCrop.Split("frame=")[0].Trim()
+		$strCrop = ($strCropDetect | Where-Object { $_ -match "crop=" })[-1]
+		$strCrop = ($strCrop -split "crop=")[-1]
+		$strCrop = $strCrop.Trim()
 		
 		#add to the crop list if there are no errors
 		If ($strCrop -match '^([0-9]+):([0-9]+):([0-9]+):([0-9]+)$') {
@@ -644,7 +647,7 @@ Function Set-Crop ($objInputFile, $objPrevFilter, $ForceCrop, $NoCrop, $MinRes) 
 		Write-Host $strProgress -NoNewLine
 
 		#remove the carriage return from the beginning of the progress string
-		$strProgress = $strProgress -replace '\r',''
+		$strProgress = $strProgress -replace '\r', ''
 
 		$intCropCounter++
 	}
@@ -815,8 +818,8 @@ Function Set-Scale ($objFFInfo, $objInputFile, $objPrevFilter, $Round, $ForceRes
 	}
 	
 	#quantize the output values to the user defined 'Round' parameter
-	$intOutputWidth = [int](Round-Value $floatOutputWidth $Round)
-	$intOutputHeight = [int](Round-Value $floatOutputHeight $Round)
+	$intOutputWidth = [int](Get-RoundedValue $floatOutputWidth $Round)
+	$intOutputHeight = [int](Get-RoundedValue $floatOutputHeight $Round)
 	
 	#if the output width is greater than the max width, this is possible due to quantization
 	If ($intOutputWidth -gt $intMaxWidth) {
@@ -907,17 +910,17 @@ Function Set-Subs ($objFFInfo, $objInputFile, $objPrevFilter, $objTempFile, $For
 	}
 
 	#process normal subtitles
-	[int[]]$arrSubFilterIndexes = $objFFInfo.streams | Where-Object {($_.codec_type -eq 'subtitle') -and ($_.codec_name -notin $arrPGSCodecs)} | Select-Object -ExpandProperty index
+	[int[]]$arrSubFilterIndexes = $objFFInfo.streams | Where-Object { ($_.codec_type -eq 'subtitle') -and ($_.codec_name -notin $arrPGSCodecs) } | Select-Object -ExpandProperty index
 	$intSubFilterIndex = $arrSubFilterIndexes.IndexOf($objInputFile.Index.Sub)
 
-	$strFullNameEsc = Escape-Filter $objInputFile.FullName
+	$strFullNameEsc = Get-EscapedFilter $objInputFile.FullName
 	
 	#use the font path
 	If (Test-Path -LiteralPath $objTempFile.Directory) {
-		$strFontPathEsc = Escape-Filter $objTempFile.Directory
+		$strFontPathEsc = Get-EscapedFilter $objTempFile.Directory
 	}
 	Else {
-		$strFontPathEsc = Escape-Filter $PSScriptRoot
+		$strFontPathEsc = Get-EscapedFilter $PSScriptRoot
 	}
 	
 	$strOrigSize = Get-PlayRes $objFFInfo $objInputFile $objSubFilter $objTempFile
@@ -945,8 +948,8 @@ Function Get-PlayRes ($objFFInfo, $objInputFile, $objSubFilter, $objTempFile) {
 	
 	#get the content of the [Script Info] section
 	$objASSContent = Get-Content -LiteralPath $objTempFile.ASS
-	$strPlayResX = $objASSContent | Where-Object {$_ -imatch '^\s*?(PlayResX)\s*?:\s*?\d*?\s*?$'} | Select-Object -First 1
-	$strPlayResY = $objASSContent | Where-Object {$_ -imatch '^\s*?(PlayResY)\s*?:\s*?\d*?\s*?$'} | Select-Object -First 1
+	$strPlayResX = $objASSContent | Where-Object { $_ -imatch '^\s*?(PlayResX)\s*?:\s*?\d*?\s*?$' } | Select-Object -First 1
+	$strPlayResY = $objASSContent | Where-Object { $_ -imatch '^\s*?(PlayResY)\s*?:\s*?\d*?\s*?$' } | Select-Object -First 1
 	
 	#if either of the playres strings do not exist
 	If ([string]::IsNullOrEmpty($strPlayResX) -or [string]::IsNullOrEmpty($strPlayResY)) {
@@ -979,7 +982,7 @@ Function Get-ScaleAlgo ($intInWidth, $intInHeight, $intOutWidth, $intOutHeight) 
 }
 
 Function Get-Fonts ($objFFInfo, $objInputFile, $objTempFile) {
-	$objFontAttachments = $objFFInfo.streams | Where-Object {($_.codec_type -eq 'attachment') -and ($_.tags.mimetype -like '*font*')}
+	$objFontAttachments = $objFFInfo.streams | Where-Object { ($_.codec_type -eq 'attachment') -and ($_.tags.mimetype -like '*font*') }
 
 	If ((-not $objFontAttachments) -or ($objInputFile.SubIndex -eq -1)) {
 		Return
@@ -1005,13 +1008,13 @@ Function Get-Fonts ($objFFInfo, $objInputFile, $objTempFile) {
 Function Set-FilterChainIO ($objFilterChain, $strFilterChainInput, $strFilterChainOutput) {
 	$intFilterCounter = 0
 
-	$objFilterChain | ForEach {
+	$objFilterChain | ForEach-Object {
 		#if we are on the first item, set the filterchain input as the first input
 		If ($intFilterCounter -eq 0) {
-			$_.Inputs = @($strFilterChainInput) + ($_.Inputs | Where-Object {$_})
+			$_.Inputs = @($strFilterChainInput) + ($_.Inputs | Where-Object { $_ })
 		}
 		Else {
-			$_.Inputs = @($strFilterChainOutput) + ($_.Inputs | Where-Object {$_})
+			$_.Inputs = @($strFilterChainOutput) + ($_.Inputs | Where-Object { $_ })
 		}
 
 		#if we are on the last item, set the filterchain output to the output
@@ -1019,7 +1022,7 @@ Function Set-FilterChainIO ($objFilterChain, $strFilterChainInput, $strFilterCha
 			$_.Outputs = @($strFilterChainOutput)
 		}
 		Else {
-			$_.Outputs = @($strFilterChainOutput) + ($_.Outputs | Where-Object {$_})
+			$_.Outputs = @($strFilterChainOutput) + ($_.Outputs | Where-Object { $_ })
 		}
 
 		$intFilterCounter++
@@ -1030,9 +1033,9 @@ Function Set-FilterChainIO ($objFilterChain, $strFilterChainInput, $strFilterCha
 
 Function Get-FilterChainString ($objFilterChain) {
 	$arrFilterChain = @()
-	$objFilterChain | ForEach {
+	$objFilterChain | ForEach-Object {
 		If ($_.String) {
-			$strFilterInput =  '[{0}]' -f ($_.Inputs -join '][')
+			$strFilterInput = '[{0}]' -f ($_.Inputs -join '][')
 			$strFilterOutput = '[{0}]' -f ($_.Outputs -join '][')
 
 			$arrFilterChain += '{0}{1}{2}' -f $strFilterInput, $_.String, $strFilterOutput
@@ -1045,60 +1048,60 @@ Function Get-FilterChainString ($objFilterChain) {
 }
 
 #escape the subtitle video filter string so powershell interprets it correctly
-Function Escape-Filter ($strInput) {
+Function Get-EscapedFilter($strInput) {
 	#replace backslashes
-	If ($strInput -match '\\') {$strInput=$strInput.Replace('\', '\\\\')}
+	If ($strInput -match '\\') { $strInput = $strInput.Replace('\', '\\\\') }
 
 	#replace colons
-	If ($strInput -match ':') {$strInput=$strInput.Replace(':', '\\:')}
+	If ($strInput -match ':') { $strInput = $strInput.Replace(':', '\\:') }
 
 	#replace semicolons
-	If ($strInput -match ';') {$strInput=$strInput.Replace(';', '\;')}
+	If ($strInput -match ';') { $strInput = $strInput.Replace(';', '\;') }
 
 	#replace commas
-	If ($strInput -match ',') {$strInput=$strInput.Replace(',', '\,')}
+	If ($strInput -match ',') { $strInput = $strInput.Replace(',', '\,') }
 
 	#replace single quotes
-	If ($strInput -match '''') {$strInput=$strInput.Replace('''', '\\\''')}
+	If ($strInput -match '''') { $strInput = $strInput.Replace('''', '\\\''') }
 
 	#replace left square brackets
-	If ($strInput -match '\[') {$strInput=$strInput.Replace('[', '\[')}
+	If ($strInput -match '\[') { $strInput = $strInput.Replace('[', '\[') }
 
 	#replace right square brackets
-	If ($strInput -match '\]') {$strInput=$strInput.Replace(']', '\]')}
+	If ($strInput -match '\]') { $strInput = $strInput.Replace(']', '\]') }
 
 	#return the result
 	Return $strInput
 }
 
 #unescape the subtitle video filter string so it can be displayed correctly
-Function Unescape-Filter ($strInput) {
+Function Get-UnescapedFilter($strInput) {
 	#replace backslashes
-	If ($strInput -match '\\') {$strInput = $strInput.Replace('\\\\', '\')}
+	If ($strInput -match '\\') { $strInput = $strInput.Replace('\\\\', '\') }
 
 	#replace colons
-	If ($strInput -match ':') {$strInput = $strInput.Replace('\\:', ':')}
+	If ($strInput -match ':') { $strInput = $strInput.Replace('\\:', ':') }
 
 	#replace semicolons
-	If ($strInput -match ';') {$strInput = $strInput.Replace('\;', ';')}
+	If ($strInput -match ';') { $strInput = $strInput.Replace('\;', ';') }
 
 	#replace commas
-	If ($strInput -match ',') {$strInput = $strInput.Replace('\,', ',')}
+	If ($strInput -match ',') { $strInput = $strInput.Replace('\,', ',') }
 
 	#replace single quotes
-	If ($strInput -match '''') {$strInput = $strInput.Replace('\\\''', '''')}
+	If ($strInput -match '''') { $strInput = $strInput.Replace('\\\''', '''') }
 
 	#replace left square brackets
-	If ($strInput -match '\[') {$strInput = $strInput.Replace('\[', '[')}
+	If ($strInput -match '\[') { $strInput = $strInput.Replace('\[', '[') }
 
 	#replace right square brackets
-	If ($strInput -match '\]') {$strInput = $strInput.Replace('\]', ']')}
+	If ($strInput -match '\]') { $strInput = $strInput.Replace('\]', ']') }
 
 	#return the result
 	Return $strInput
 }
 
-Function Scrape-Title ($objScrape) {
+Function Get-Title ($objScrape) {
 	#set the tvdb api variables
 	$strKey = '6262A88CCAB7E724'
 	$strOrder = 'default'
@@ -1129,7 +1132,7 @@ Function Scrape-Title ($objScrape) {
 	Return $xmlInfo.Data.Episode.EpisodeName
 }
 
-Function Scrape-Series ($objScrape) {
+Function Get-Series ($objScrape) {
 	#declare a default falure object to return
 	$objScrapeFail = [Series]::new($objScrape.Series.Name, -1)
 
@@ -1158,7 +1161,7 @@ Function Scrape-Series ($objScrape) {
 	$objSeries = @($xmlInfo.data.series)[0]
 
 	#return a new series object with both the scraped seriesname and seriesid
-	Return [Series]::new($objSeries.SeriesName,$objSeries.seriesid)
+	Return [Series]::new($objSeries.SeriesName, $objSeries.seriesid)
 }
 
 Function Get-OutputExtension ($strExtension, $boolNoEncode) {
@@ -1169,10 +1172,10 @@ Function Get-OutputExtension ($strExtension, $boolNoEncode) {
 	Return '.mp4'
 }
 
-Function Clean-BaseName ($strBaseName, $arrReplace) {
+Function Format-BaseName ($strBaseName, $arrReplace) {
 	#process any string replacements
 	If ($arrReplace) {
-		$arrReplace | ForEach {
+		$arrReplace | ForEach-Object {
 			$arrElement = $_.Split(':')
 
 			If ($arrElement[1]) {
@@ -1202,12 +1205,12 @@ Function Clean-BaseName ($strBaseName, $arrReplace) {
 	$strBaseName = (Get-Culture).TextInfo.ToTitleCase($strBaseName)
 
 	#normalize name
-	$strBaseName = Normalize-Name $strBaseName
+	$strBaseName = Format-Name $strBaseName
 
 	Return $strBaseName
 }
 
-Function Normalize-Name ($strInput) {
+Function Format-Name ($strInput) {
 	#replace '–|—|−' with '-'
 	$strInput = $strInput -replace '–|—|−', '-'
 
@@ -1230,7 +1233,7 @@ Function Normalize-Name ($strInput) {
 	$strInput = $strInput -replace '"', "''"
 
 	#remove any accented characters
-	[char[]]$strInput.Normalize('FormD') | ForEach {
+	[char[]]$strInput.Normalize('FormD') | ForEach-Object {
 		If ([System.Globalization.CharUnicodeInfo]::GetUnicodeCategory($_) -ne 'NonSpacingMark') {
 			$strNoAccents = $strNoAccents + $_
 		}
@@ -1251,14 +1254,14 @@ Function Normalize-Name ($strInput) {
 }
 
 #process parameters defined in ini file
-Function Process-INI ($INIPath, $objParamKeys) {
+Function Get-INI ($INIPath, $objParamKeys) {
 	#no ini file defined
 	If (-not $INIPath) {
 		Return
 	}
 
 	#gather parameters from ini file, skipping comments / blank lines
-	$hashINIContent = Get-Content -LiteralPath $INIPath | Where-Object {(($_) -and ($_.Trim)) -and ($_.Trim() -notmatch '^\;')} | Out-String | ConvertFrom-StringData
+	$hashINIContent = Get-Content -LiteralPath $INIPath | Where-Object { (($_) -and ($_.Trim)) -and ($_.Trim() -notmatch '^\;') } | Out-String | ConvertFrom-StringData
 
 	#iterate through all existing parameters, overwriting with existing ini values
 	ForEach ($objKey In $objParamKeys) {
@@ -1268,7 +1271,8 @@ Function Process-INI ($INIPath, $objParamKeys) {
 		If (-not $objParam) {
 			Continue
 		}
-
+	
+		#if the parameter is not in the ini file, skip it
 		If (-not $hashINIContent.ContainsKey($objKey)) {
 			Continue
 		}
@@ -1276,11 +1280,10 @@ Function Process-INI ($INIPath, $objParamKeys) {
 		#if it is a switch parameter, process as needed
 		If ($objParam.Value -is [System.Management.Automation.SwitchParameter]) {
 			Set-Variable -Scope Script -Name $objKey -Value (Convert-StringToBool $hashINIContent."$objKey")
-
 			Continue
 		}
 
-		#otherwise, the parameter does not require processing
+		#otherwise, process the parameter as normal
 		Set-Variable -Scope Script -Name $objKey -Value $hashINIContent."$objKey"
 	}
 }
@@ -1307,16 +1310,24 @@ Function Convert-StringToBool ($strInput) {
 
 #convert duration to sexagesimal format for display
 Function Convert-ToSexagesimal ([ValidateRange(0.0, [float]::MaxValue)][float]$Duration) {
+	$strDecimalSeperator = (Get-Culture).NumberFormat.NumberDecimalSeparator
 	
 	[int]$intHours = [Math]::Truncate($Duration / 3600)
 	[int]$intMins = [Math]::Truncate($Duration / 60) - ($intHours * 60)
 	[float]$floatSecs = $Duration - ($intHours * 3600) - ($intMins * 60)
+	[int]$intSecs = [Math]::Truncate($floatSecs)
+	
+	#try removing the whole number part using the modulus operator, if it fails
+	#the seconds were equal to zero, so just multiply the remainder instead
+	Try { [int]$intMils = [Math]::Round(($floatSecs % $intSecs) * 1000) }
+	Catch { [int]$intMils = [Math]::Round($floatSecs * 1000) }
 	
 	$strHours = '{0:d2}' -f $intHours
 	$strMins = '{0:d2}' -f $intMins
-	$strSecs = '{0:n3}' -f $floatSecs
+	$strSecs = '{0:d2}' -f $intSecs
+	$strMils = '{0:d3}' -f $intMils
 
-	Return '{0}:{1}:{2}' -f $strHours, $strMins, $strSecs
+	Return '{0}:{1}:{2}{3}{4}' -f $strHours, $strMins, $strSecs, $strDecimalSeperator, $strMils
 }
 
 Function Convert-FromSexagesimal ([string]$strDuration) {
@@ -1341,7 +1352,7 @@ Function Convert-FromSexagesimal ([string]$strDuration) {
 }
 
 #round integers to arbitrary values
-Function Round-Value ($floatInput, $intRound) {
+Function Get-RoundedValue ($floatInput, $intRound) {
 	Return [System.Math]::Round($floatInput / $intRound) * $intRound
 }
 
@@ -1403,26 +1414,26 @@ Function Set-OutputPixelFormat ($objInputFile, $strPixelFormat, $strVideoCodec) 
 }
 
 Function Show-Info ($objFFInfo) {
-		$objStreamList = New-Object System.Collections.Generic.List[Object]
+	$objStreamList = New-Object System.Collections.Generic.List[Object]
 
-		$objFFInfo.streams | ForEach {
-			If ($_.codec_type -ne 'attachment') {
-				$objStream = [ordered]@{
-					Index = $_.index
-					CodecType = $_.codec_type
-					CodecName = $_.codec_name
-					FrameRate = ($_.r_frame_rate | Where-Object {$_ -ne '0/0'})
-					Language = $_.tags.language
-					Title = $_.tags.title
-					Default = [Bool]$_.disposition.default
-					Forced = [Bool]$_.disposition.forced
-				}
-
-				$objStreamList.Add($objStream)
+	$objFFInfo.streams | ForEach-Object {
+		If ($_.codec_type -ne 'attachment') {
+			$objStream = [ordered]@{
+				Index     = $_.index
+				CodecType = $_.codec_type
+				CodecName = $_.codec_name
+				FrameRate = ($_.r_frame_rate | Where-Object { $_ -ne '0/0' })
+				Language  = $_.tags.language
+				Title     = $_.tags.title
+				Default   = [Bool]$_.disposition.default
+				Forced    = [Bool]$_.disposition.forced
 			}
-		}
 
-		$objStreamList | ForEach {[PSCustomObject]$_} | Format-Table -AutoSize
+			$objStreamList.Add($objStream)
+		}
+	}
+
+	$objStreamList | ForEach-Object { [PSCustomObject]$_ } | Format-Table -AutoSize
 }
 
 Function Remove-TempFiles ($objTempFile) {
@@ -1433,7 +1444,7 @@ Function Remove-TempFiles ($objTempFile) {
 	$objTempFile.MP4, $objTempFile.M4A, $objTempFile.FLAC, $objTempFile.ASS | Remove-Item -ErrorAction SilentlyContinue -Force
 }
 
-Function Check-Replace ($strReplace) {
+Function Set-Replace ($strReplace) {
 	#return if the input string is empty
 	If (-not $strReplace) {
 		Return $Null
@@ -1448,17 +1459,17 @@ Function Check-Replace ($strReplace) {
 	$arrReplace = $strReplace.Split('|')
 
 	#check that the input does not contain empty elements
-	If (($arrReplace | Where-Object {-not $_}).Count) {
+	If (($arrReplace | Where-Object { -not $_ }).Count) {
 		Throw ('Invalid value for replace: {0}. Empty element(s) found.' -f $strReplace)
 	}
 
 	#check that the input is not missing colon characters
-	If (($arrReplace | Where-Object {$_ -notmatch ':'}).Count) {
+	If (($arrReplace | Where-Object { $_ -notmatch ':' }).Count) {
 		Throw ('Invalid value for replace: {0}. Missing colon(s).' -f $strReplace)
 	}
 
 	#check each element in the input string array
-	$arrReplace | ForEach {
+	$arrReplace | ForEach-Object {
 		$arrSplit = $_.Split(':')
 
 		#check that we only have two elements per split
@@ -1477,7 +1488,7 @@ Function Check-Replace ($strReplace) {
 	Return $arrReplace
 }
 
-Function Check-FrameRate ($FrameRate, $boolIsInput) {
+Function Set-FrameRate ($FrameRate, $boolIsInput) {
 	$strFrameRate = [string]$FrameRate.ToLower().Trim()
 	
 	#if the frame rate is set to auto
@@ -1503,15 +1514,13 @@ Function Check-FrameRate ($FrameRate, $boolIsInput) {
 	#make sure we have a numerator and denominator
 	$arrFrameRate = $strFrameRate.Split('/')
 	If ($arrFrameRate.Count -eq 2) {
-		Try {
-			$decNumerator = [decimal]$arrFrameRate[0]
-			$decDenominator = [decimal]$arrFrameRate[1]
+		$decNumerator, $decDenominator = $arrFrameRate -as [decimal[]]
+		If ($decNumerator -and $decDenominator) {
+			Return $strFrameRate
 		}
-		Catch {
-			Throw ("Invalid fractional value for frame rate: ($strFrameRate).")
+		Else {
+			Throw "Invalid fractional value for frame rate: ($strFrameRate)."
 		}
-		
-		Return $strFrameRate
 	}
 	#otherwise, we do not have a valid fraction
 	Else {
@@ -1533,7 +1542,7 @@ Function Check-FrameRate ($FrameRate, $boolIsInput) {
 	}
 }
 
-Function Check-Path ($strInputPath) {
+Function Set-Path ($strInputPath) {
 	If (-not (Test-Path -IsValid $strInputPath)) {
 		Throw('Path: {0} Is invalid. Please choose a different path.' -f $strInputPath)
 	}
@@ -1548,7 +1557,7 @@ Function Check-Path ($strInputPath) {
 
 #determines if the subs parameter should be enabled / disabled
 #this function must be called before any language parameter checking occurs
-Function Check-Subs ($Subs, $SubIndex, $SubTitle, $SubLang) {
+Function Set-Subs ($Subs, $SubIndex, $SubTitle, $SubLang) {
 	#if subtitles are enabled or subindex is defined or subtitle is defined or sublang is defined, return true
 	If (($Subs) -or ([int]$SubIndex -ne -1) -or ($SubTitle) -or ($SubLang)) {
 		Return $True
@@ -1560,9 +1569,9 @@ Function Check-Subs ($Subs, $SubIndex, $SubTitle, $SubLang) {
 
 #determines if the scrape parameter should be enabled / disabled
 #this function must be called before any language parameter checking occurs
-Function Check-Scrape ($Scrape, $ShowQuery, $ScrapeLang, $SeasonQuery, $EpisodeQuery, $SeriesID) {
+Function Set-Scrape ($Scrape, $ShowQuery, $ScrapeLang, $SeasonQuery, $EpisodeQuery, $SeriesID) {
 	#if scrape is enabled or any query is valid or scrapelang is defined or seriesid is defined or episode offset is defined, return true
-	If (($Scrape) -or ($ShowQuery)  -or ($ScrapeLang) -or ([int]$SeasonQuery -ne -1) -or ([int]$EpisodeQuery -ne -1) -or ([int]$SeriesID -ne -1)) {
+	If (($Scrape) -or ($ShowQuery) -or ($ScrapeLang) -or ([int]$SeasonQuery -ne -1) -or ([int]$EpisodeQuery -ne -1) -or ([int]$SeriesID -ne -1)) {
 		Return $True
 	}
 
@@ -1571,7 +1580,7 @@ Function Check-Scrape ($Scrape, $ShowQuery, $ScrapeLang, $SeasonQuery, $EpisodeQ
 }
 
 #check that the video preset parameter is valid
-Function Check-VideoPreset($VideoPreset) {
+Function Set-VideoPreset($VideoPreset) {
 	#valid presets
 	$arrVideoPresets = @('ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow', 'placebo')
 
@@ -1585,41 +1594,41 @@ Function Check-VideoPreset($VideoPreset) {
 }
 
 #check that the input language parameter is valid
-Function Check-Lang ($InputLang) {
+Function Set-Lang ($InputLang) {
 	#if the language is undefined, return system language
-	If (-not $InputLang)  {
+	If (-not $InputLang) {
 		Return (Get-Culture).ThreeLetterISOLanguageName
 	}
 
 	#initialize an array with all valid (iso 639-2) language codes
 	$arrLangCodes = @(`
-	'aar','abk','ace','ach','ada','ady','afa','afh','afr','ain','aka','akk','alb','ale','alg','alt','amh','ang',`
-	'anp','apa','ara','arc','arg','arm','arn','arp','art','arw','asm','ast','ath','aus','ava','ave','awa','aym',`
-	'aze','bad','bai','bak','bal','bam','ban','baq','bas','bat','bej','bel','bem','ben','ber','bho','bih','bik',`
-	'bin','bis','bla','bnt','bos','bra','bre','btk','bua','bug','bul','bur','byn','cad','cai','car','cat','cau',`
-	'ceb','cel','cha','chb','che','chg','chi','chk','chm','chn','cho','chp','chr','chu','chv','chy','cmc','cop',`
-	'cor','cos','cpe','cpf','cpp','cre','crh','crp','csb','cus','cze','dak','dan','dar','day','del','den','dgr',`
-	'din','div','doi','dra','dsb','dua','dum','dut','dyu','dzo','efi','egy','eka','elx','eng','enm','epo','est',`
-	'ewe','ewo','fan','fao','fat','fij','fil','fin','fiu','fon','fre','frm','fro','frr','frs','fry','ful','fur',`
-	'gaa','gay','gba','gem','geo','ger','gez','gil','gla','gle','glg','glv','gmh','goh','gon','gor','got','grb',`
-	'grc','gre','grn','gsw','guj','gwi','hai','hat','hau','haw','heb','her','hil','him','hin','hit','hmn','hmo',`
-	'hrv','hsb','hun','hup','iba','ibo','ice','ido','iii','ijo','iku','ile','ilo','ina','inc','ind','ine','inh',`
-	'ipk','ira','iro','ita','jav','jbo','jpn','jpr','jrb','kaa','kab','kac','kal','kam','kan','kar','kas','kau',`
-	'kaw','kaz','kbd','kha','khi','khm','kho','kik','kin','kir','kmb','kok','kom','kon','kor','kos','kpe','krc',`
-	'krl','kro','kru','kua','kum','kur','kut','lad','lah','lam','lao','lat','lav','lez','lim','lin','lit','lol',`
-	'loz','ltz','lua','lub','lug','lui','lun','luo','lus','mac','mad','mag','mah','mai','mak','mal','man','mao',`
-	'map','mar','mas','may','mdf','mdr','men','mga','mic','min','mis','mkh','mlg','mlt','mnc','mni','mno','moh',`
-	'mon','mos','mul','mun','mus','mwl','mwr','myn','myv','nah','nai','nap','nau','nav','nbl','nde','ndo','nds',`
-	'nep','new','nia','nic','niu','nno','nob','nog','non','nor','nqo','nso','nub','nwc','nya','nym','nyn','nyo',`
-	'nzi','oci','oji','ori','orm','osa','oss','ota','oto','paa','pag','pal','pam','pan','pap','pau','peo','per',`
-	'phi','phn','pli','pol','pon','por','pra','pro','pus','qaa','que','raj','rap','rar','roa','roh','rom','rum',`
-	'run','rup','rus','sad','sag','sah','sai','sal','sam','san','sas','sat','scn','sco','sel','sem','sga','sgn',`
-	'shn','sid','sin','sio','sit','sla','slo','slv','sma','sme','smi','smj','smn','smo','sms','sna','snd','snk',`
-	'sog','som','son','sot','spa','srd','srn','srp','srr','ssa','ssw','suk','sun','sus','sux','swa','swe','syc',`
-	'syr','tah','tai','tam','tat','tel','tem','ter','tet','tgk','tgl','tha','tib','tig','tir','tiv','tkl','tlh',`
-	'tli','tmh','tog','ton','tpi','tsi','tsn','tso','tuk','tum','tup','tur','tut','tvl','twi','tyv','udm','uga',`
-	'uig','ukr','umb','und','urd','uzb','vai','ven','vie','vol','vot','wak','wal','war','was','wel','wen','wln',`
-	'wol','xal','xho','yao','yap','yid','yor','ypk','zap','zbl','zen','zgh','zha','znd','zul','zun','zxx','zza')
+			'aar', 'abk', 'ace', 'ach', 'ada', 'ady', 'afa', 'afh', 'afr', 'ain', 'aka', 'akk', 'alb', 'ale', 'alg', 'alt', 'amh', 'ang', `
+			'anp', 'apa', 'ara', 'arc', 'arg', 'arm', 'arn', 'arp', 'art', 'arw', 'asm', 'ast', 'ath', 'aus', 'ava', 'ave', 'awa', 'aym', `
+			'aze', 'bad', 'bai', 'bak', 'bal', 'bam', 'ban', 'baq', 'bas', 'bat', 'bej', 'bel', 'bem', 'ben', 'ber', 'bho', 'bih', 'bik', `
+			'bin', 'bis', 'bla', 'bnt', 'bos', 'bra', 'bre', 'btk', 'bua', 'bug', 'bul', 'bur', 'byn', 'cad', 'cai', 'car', 'cat', 'cau', `
+			'ceb', 'cel', 'cha', 'chb', 'che', 'chg', 'chi', 'chk', 'chm', 'chn', 'cho', 'chp', 'chr', 'chu', 'chv', 'chy', 'cmc', 'cop', `
+			'cor', 'cos', 'cpe', 'cpf', 'cpp', 'cre', 'crh', 'crp', 'csb', 'cus', 'cze', 'dak', 'dan', 'dar', 'day', 'del', 'den', 'dgr', `
+			'din', 'div', 'doi', 'dra', 'dsb', 'dua', 'dum', 'dut', 'dyu', 'dzo', 'efi', 'egy', 'eka', 'elx', 'eng', 'enm', 'epo', 'est', `
+			'ewe', 'ewo', 'fan', 'fao', 'fat', 'fij', 'fil', 'fin', 'fiu', 'fon', 'fre', 'frm', 'fro', 'frr', 'frs', 'fry', 'ful', 'fur', `
+			'gaa', 'gay', 'gba', 'gem', 'geo', 'ger', 'gez', 'gil', 'gla', 'gle', 'glg', 'glv', 'gmh', 'goh', 'gon', 'gor', 'got', 'grb', `
+			'grc', 'gre', 'grn', 'gsw', 'guj', 'gwi', 'hai', 'hat', 'hau', 'haw', 'heb', 'her', 'hil', 'him', 'hin', 'hit', 'hmn', 'hmo', `
+			'hrv', 'hsb', 'hun', 'hup', 'iba', 'ibo', 'ice', 'ido', 'iii', 'ijo', 'iku', 'ile', 'ilo', 'ina', 'inc', 'ind', 'ine', 'inh', `
+			'ipk', 'ira', 'iro', 'ita', 'jav', 'jbo', 'jpn', 'jpr', 'jrb', 'kaa', 'kab', 'kac', 'kal', 'kam', 'kan', 'kar', 'kas', 'kau', `
+			'kaw', 'kaz', 'kbd', 'kha', 'khi', 'khm', 'kho', 'kik', 'kin', 'kir', 'kmb', 'kok', 'kom', 'kon', 'kor', 'kos', 'kpe', 'krc', `
+			'krl', 'kro', 'kru', 'kua', 'kum', 'kur', 'kut', 'lad', 'lah', 'lam', 'lao', 'lat', 'lav', 'lez', 'lim', 'lin', 'lit', 'lol', `
+			'loz', 'ltz', 'lua', 'lub', 'lug', 'lui', 'lun', 'luo', 'lus', 'mac', 'mad', 'mag', 'mah', 'mai', 'mak', 'mal', 'man', 'mao', `
+			'map', 'mar', 'mas', 'may', 'mdf', 'mdr', 'men', 'mga', 'mic', 'min', 'mis', 'mkh', 'mlg', 'mlt', 'mnc', 'mni', 'mno', 'moh', `
+			'mon', 'mos', 'mul', 'mun', 'mus', 'mwl', 'mwr', 'myn', 'myv', 'nah', 'nai', 'nap', 'nau', 'nav', 'nbl', 'nde', 'ndo', 'nds', `
+			'nep', 'new', 'nia', 'nic', 'niu', 'nno', 'nob', 'nog', 'non', 'nor', 'nqo', 'nso', 'nub', 'nwc', 'nya', 'nym', 'nyn', 'nyo', `
+			'nzi', 'oci', 'oji', 'ori', 'orm', 'osa', 'oss', 'ota', 'oto', 'paa', 'pag', 'pal', 'pam', 'pan', 'pap', 'pau', 'peo', 'per', `
+			'phi', 'phn', 'pli', 'pol', 'pon', 'por', 'pra', 'pro', 'pus', 'qaa', 'que', 'raj', 'rap', 'rar', 'roa', 'roh', 'rom', 'rum', `
+			'run', 'rup', 'rus', 'sad', 'sag', 'sah', 'sai', 'sal', 'sam', 'san', 'sas', 'sat', 'scn', 'sco', 'sel', 'sem', 'sga', 'sgn', `
+			'shn', 'sid', 'sin', 'sio', 'sit', 'sla', 'slo', 'slv', 'sma', 'sme', 'smi', 'smj', 'smn', 'smo', 'sms', 'sna', 'snd', 'snk', `
+			'sog', 'som', 'son', 'sot', 'spa', 'srd', 'srn', 'srp', 'srr', 'ssa', 'ssw', 'suk', 'sun', 'sus', 'sux', 'swa', 'swe', 'syc', `
+			'syr', 'tah', 'tai', 'tam', 'tat', 'tel', 'tem', 'ter', 'tet', 'tgk', 'tgl', 'tha', 'tib', 'tig', 'tir', 'tiv', 'tkl', 'tlh', `
+			'tli', 'tmh', 'tog', 'ton', 'tpi', 'tsi', 'tsn', 'tso', 'tuk', 'tum', 'tup', 'tur', 'tut', 'tvl', 'twi', 'tyv', 'udm', 'uga', `
+			'uig', 'ukr', 'umb', 'und', 'urd', 'uzb', 'vai', 'ven', 'vie', 'vol', 'vot', 'wak', 'wal', 'war', 'was', 'wel', 'wen', 'wln', `
+			'wol', 'xal', 'xho', 'yao', 'yap', 'yid', 'yor', 'ypk', 'zap', 'zbl', 'zen', 'zgh', 'zha', 'znd', 'zul', 'zun', 'zxx', 'zza')
 
 	#make sure the input language is in the correct format for matching
 	$InputLang = ($InputLang.ToLower()).Trim()

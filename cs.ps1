@@ -1,7 +1,7 @@
-  Param (
-	[Parameter(Mandatory = $True)] [ValidateScript({Test-Path -LiteralPath $_})] [string] $InputPath,
-	[ValidateScript({Test-Path -LiteralPath $_ -PathType Container})] [string] $OutputPath = $PSScriptRoot,
-	[ValidateScript({Test-Path -LiteralPath $_})] [string] $INIPath,
+Param (
+	[Parameter(Mandatory = $True)] [ValidateScript({ Test-Path -LiteralPath $_ })] [string] $InputPath,
+	[ValidateScript({ Test-Path -LiteralPath $_ -PathType Container })] [string] $OutputPath = $PSScriptRoot,
+	[ValidateScript({ Test-Path -LiteralPath $_ })] [string] $INIPath,
 	[Switch] $NoRecurse,
 	[Switch] $Scrape,
 	[Switch] $Subs,
@@ -42,7 +42,8 @@
 	[Switch] $ForcedSubsOnly,
 	[Switch] $NoNormalize,
 	[ValidateSet(0, 1, 2)] [int] $Deinterlace = 0,
-	[Switch] $Replicate
+	[Switch] $Replicate,
+	[ValidateRange(-999, 999)] [int] $EpisodeOffset = 0
 )
 
 #ensure we have the correct powershell version
@@ -63,28 +64,28 @@ $Script:strMP4BoxPath = '{0}\bin\mp4box.exe' -f $PSScriptRoot
 . $strCsLibPath
 
 #import ini parameters (overwrites command line parameters)
-$strInvocationName = '{0}\{1}' -f $PSScriptRoot ,$MyInvocation.MyCommand
+$strInvocationName = '{0}\{1}' -f $PSScriptRoot , $MyInvocation.MyCommand
 $objParameters = ((Get-Command -Name $strInvocationName).Parameters).Keys
 
-Process-INI $INIPath $objParameters
+Get-INI $INIPath $objParameters
 
 #check parameters
-Set-Variable -Name InputPath -Value (Check-Path $InputPath)
-Set-Variable -Name OutputPath -Value (Check-Path $OutputPath)
-Set-Variable -Name Subs -Value (Check-Subs $Subs $SubIndex $SubTitle $SubLang)
-Set-Variable -Name Scrape -Value (Check-Scrape $Scrape $ShowQuery $ScrapeLang $SeasonQuery $EpisodeQuery $SeriesID)
-Set-Variable -Name VideoPreset -Value  (Check-VideoPreset $VideoPreset)
-Set-Variable -Name Replace -Value (Check-Replace $Replace)
-Set-Variable -Name AudioLang -Value (Check-Lang $AudioLang)
-Set-Variable -Name SubLang -Value (Check-Lang $SubLang)
-Set-Variable -Name ScrapeLang -Value (Check-Lang $ScrapeLang)
-Set-Variable -Name FrameRateIn -Value (Check-FrameRate $FrameRateIn $True)
-Set-Variable -Name FrameRateOut -Value (Check-FrameRate $FrameRateOut $False)
+Set-Variable -Name InputPath -Value (Set-Path $InputPath)
+Set-Variable -Name OutputPath -Value (Set-Path $OutputPath)
+Set-Variable -Name Subs -Value (Set-Subs $Subs $SubIndex $SubTitle $SubLang)
+Set-Variable -Name Scrape -Value (Set-Scrape $Scrape $ShowQuery $ScrapeLang $SeasonQuery $EpisodeQuery $SeriesID)
+Set-Variable -Name VideoPreset -Value  (Set-VideoPreset $VideoPreset)
+Set-Variable -Name Replace -Value (Set-Replace $Replace)
+Set-Variable -Name AudioLang -Value (Set-Lang $AudioLang)
+Set-Variable -Name SubLang -Value (Set-Lang $SubLang)
+Set-Variable -Name ScrapeLang -Value (Set-Lang $ScrapeLang)
+Set-Variable -Name FrameRateIn -Value (Set-FrameRate $FrameRateIn $True)
+Set-Variable -Name FrameRateOut -Value (Set-FrameRate $FrameRateOut $False)
 Set-Variable -Name CRF -Value (Set-CRF $CRF $VideoCodec)
 
 #build a list of input files and display them
 $InputFormats = @('.m4v', '.vob', '.avi', '.flv', '.wmv', '.ts', '.m2ts', '.avs', '.mov', '.mkv', '.mp4', '.webm', '.ogm', '.mpg', '.mpeg')
-$objInputList = Get-ChildItem -LiteralPath $InputPath -Recurse:(-not $NoRecurse) -File | Where-Object {$InputFormats -Contains $_.Extension}
+$objInputList = Get-ChildItem -LiteralPath $InputPath -Recurse:(-not $NoRecurse) -File | Where-Object { $InputFormats -Contains $_.Extension }
 
 If (-not $objInputList) {
 	Throw "No valid input files found."
@@ -98,6 +99,10 @@ $intFileCount = 1
 $intTotalFileCount = $objInputList.Count
 ForEach ($objFile In $objInputList) {
 	Try {
+		###HACK TO ALLOW LEGACY COMMAND PARSING FOR NOW###
+		$PSNativeCommandArgumentPassingOrig = $PSNativeCommandArgumentPassing
+		$PSNativeCommandArgumentPassing = 'Legacy'
+		
 		#show progress
 		If ((-not $HideProgress) -and (-not $ShowInfo)) {
 			$strProgress = "`nProcessing file $intFileCount of " + $intTotalFileCount
@@ -142,13 +147,13 @@ ForEach ($objFile In $objInputList) {
 		#construct an output file object
 		$objOutputFile = [OutputFile]::new()
 		$objOutputFile.BaseName = $objInputFile.BaseName
-		$objOutputFile.BaseNameClean = Clean-BaseName $objOutputFile.BaseName $Replace
+		$objOutputFile.BaseNameClean = Format-BaseName $objOutputFile.BaseName $Replace
 		$objOutputFile.Extension = Get-OutputExtension $objInputFile.Extension $NoEncode
 
 		#if we are scraping,
-		If($Scrape) {
+		If ($Scrape) {
 			#construct a scrape object
-			$objScrape = [Scrape]::new($objOutputFile.BaseNameClean, $SeriesID, $ShowQuery, $SeasonQuery, $EpisodeQuery, $ScrapeLang)
+			$objScrape = [Scrape]::new($objOutputFile.BaseNameClean, $SeriesID, $ShowQuery, $SeasonQuery, $EpisodeQuery, $ScrapeLang, $EpisodeOffset)
 
 			#if the scrape was a success, make the output path using scraped data
 			If ($objScrape.Success) {
@@ -253,7 +258,7 @@ ForEach ($objFile In $objInputList) {
 		$objFilterChain += $objFilterSubs
 
 		#remove unused filters from the chain
-		$objFilterChain = $objFilterChain | Where-Object {$_.String}
+		$objFilterChain = $objFilterChain | Where-Object { $_.String }
 
 		#if there are no filters, set up a null filter
 		If (-not $objFilterChain) {
@@ -272,14 +277,14 @@ ForEach ($objFile In $objInputList) {
 		#construct the full filter string
 		$objFilterChains += Get-FilterChainString $objFilterChain
 
-		$objFilterChain | Where-Object {$_.FilterChain} | % {
+		$objFilterChain | Where-Object { $_.FilterChain } | ForEach-Object {
 			$objFilterChains += Get-FilterChainString $_.FilterChain
 		}
 
 		$strFilter = $objFilterChains -join ';'
 
 		#show the filter string
-		Write-Host ("`nFilter Chain: " + (Unescape-Filter $strFilter))
+		Write-Host ("`nFilter Chain: " + (Get-UnescapedFilter $strFilter))
 
 		#show ffmpeg version
 		Write-Host ("`n" + (& $strFFmpegPath -version | Select-Object -First 1).Trim())
@@ -304,7 +309,7 @@ ForEach ($objFile In $objInputList) {
 
 		#otherwise, we have a valid audio index, so encode video and audio
 		& $strFFmpegPath -y -loglevel $LogLevel -stats -forced_subs_only ([int]$ForcedSubsOnly.ToBool()) $objFROpts.InOpt $objFROpts.InVal -i $objInputFile.FullName $objFROpts.OutOpt $objFROpts.OutVal -c:v $VideoCodec -preset:v $VideoPreset -x265-params log-level=error -pix_fmt $objOutputFile.PixelFormat -crf:v $CRF -map [out] -filter_complex $strFilter -map_metadata -1 -map_chapters -1 $objTempFile.MP4 `
-		-map 0:$($objInputFile.Index.Aud) -c:a flac -map_metadata -1 -map_chapters -1 -compression_level 0 -af aformat=sample_fmts=s16:channel_layouts=stereo:sample_rates=48000 $objTempFile.FLAC
+			-map 0:$($objInputFile.Index.Aud) -c:a flac -map_metadata -1 -map_chapters -1 -compression_level 0 -af aformat=sample_fmts=s16:channel_layouts=stereo:sample_rates=48000 $objTempFile.FLAC
 
 		#encode audio
 		Write-Host -ForegroundColor Green "`nEncoding audio"
@@ -327,6 +332,9 @@ ForEach ($objFile In $objInputList) {
 		
 		#always remove temporary files before finishing
 		Remove-TempFiles $objTempFile
+		
+		###HACK TO ALLOW LEGACY COMMAND PARSING FOR NOW###
+		$PSNativeCommandArgumentPassing = $PSNativeCommandArgumentPassingOrig
 	}
 }
 
