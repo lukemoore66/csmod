@@ -72,7 +72,7 @@ Get-INI $INIPath $objParameters
 #check parameters
 Set-Variable -Name InputPath -Value (Set-Path $InputPath)
 Set-Variable -Name OutputPath -Value (Set-Path $OutputPath)
-Set-Variable -Name Subs -Value (Set-Subs $Subs $SubIndex $SubTitle $SubLang)
+Set-Variable -Name Subs -Value (Set-SubsInit $Subs $SubIndex $SubTitle $SubLang)
 Set-Variable -Name Scrape -Value (Set-Scrape $Scrape $ShowQuery $ScrapeLang $SeasonQuery $EpisodeQuery $SeriesID)
 Set-Variable -Name VideoPreset -Value  (Set-VideoPreset $VideoPreset)
 Set-Variable -Name Replace -Value (Set-Replace $Replace)

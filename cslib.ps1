@@ -1557,7 +1557,7 @@ Function Set-Path ($strInputPath) {
 
 #determines if the subs parameter should be enabled / disabled
 #this function must be called before any language parameter checking occurs
-Function Set-Subs ($Subs, $SubIndex, $SubTitle, $SubLang) {
+Function Set-SubsInit ($Subs, $SubIndex, $SubTitle, $SubLang) {
 	#if subtitles are enabled or subindex is defined or subtitle is defined or sublang is defined, return true
 	If (($Subs) -or ([int]$SubIndex -ne -1) -or ($SubTitle) -or ($SubLang)) {
 		Return $True
