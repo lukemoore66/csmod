@@ -252,6 +252,11 @@ Class Scrape {
 		$This.Series = Get-Series $This
 		$This.Series.Name = Format-Name $This.Series.Name
 
+		#put 'The' at the end of the series name
+		If ($This.Series.Name.Substring(0, 4) -eq 'The ') {
+			$This.Series.Name = $This.Series.Name.Substring(4) + ', The'
+		}
+
 		#if we still don't have a valid seriesid, exit
 		If ($This.Series.ID -eq -1) {
 			Return
@@ -413,6 +418,7 @@ Function Set-OutputFrameRate ($objInputFile, $strFrameRate, $intDeinterlace) {
 }
 
 Function Get-VideoIndex ($objFFInfo, $VideoIndex) {
+	
 	#get a list of video streams
 	$objVideoStreams = $objFFInfo.streams | Where-Object { ($_.codec_type -eq 'video') -and ($_.disposition.attached_pic -ne 1) -and ($_.disposition.still_image -eq 0) }
 
@@ -436,13 +442,13 @@ Function Get-VideoIndex ($objFFInfo, $VideoIndex) {
 	}
 
 	#use first highest resolution stream
+	$intResIndex = 0
 	$intHighestRes = 0
-	$objVideoStreams | ForEach-Object {
-		$intStreamRes = $_.width * $_.height
+	ForEach ($objVideoStream in $objVideoStreams) {
+		$intStreamRes = $objVideoStream.width * $objVideoStream.height
 		If ($intStreamRes -gt $intHighestRes) {
 			$intHighestRes = $intStreamRes
-			$intResIndex = $_.index
-			Return $intResIndex
+			$intResIndex = $objVideoStream.index
 		}
 	}
 
